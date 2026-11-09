@@ -1193,7 +1193,9 @@ pub async fn run_main(
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
 ) -> std::io::Result<AppExitInfo> {
-    system_motion::initialize().await;
+    // Both only probe the host; overlap them with config loading and terminal setup.
+    system_motion::start_initialize();
+    codex_otel::prewarm_os_info();
     startup_recovery::scope(async move {
         // Startup retains a large future for the whole session. Keep it off callers' stacks,
         // which also need room to construct a replacement chat widget on `/new`.
@@ -1249,6 +1251,7 @@ async fn run_ratatui_app(
     managed_worktree: Option<ManagedTuiWorktree>,
     daemon_startup_warning: Option<String>,
     managed_daemon: bool,
+    prepared_connection: Option<app_server_connection::PreparedConnection>,
     launch_telemetry: daemon_telemetry::Launch<
         impl FnOnce(&'static str) -> terminal_size_telemetry::LaunchTags,
     >,
@@ -1331,15 +1334,21 @@ async fn run_ratatui_app(
         .await
     };
     let startup_app_server = startup_draft
-        .run_until(
-            &mut tui,
+        .run_until(&mut tui, async {
+            // The daemon compatibility check already completed this handshake.
+            if let Some(prepared) = prepared_connection
+                && let Some(app_server) = prepared.take_for(&app_server_target).await
+            {
+                return Ok(app_server);
+            }
             connect(
                 &mut app_server_target,
                 &initial_config,
                 &cloud_config_bundle,
                 &mut state_db,
-            ),
-        )
+            )
+            .await
+        })
         .await;
     let mut app_server_session = match startup_app_server {
         Ok(Ok(app_server)) => {
@@ -2070,7 +2079,10 @@ async fn run_ratatui_app(
             Some(&mut startup_draft),
         )
         .await?;
-        startup_account = None;
+        if consent.screen_shown {
+            // Another daemon client can change authentication while this prompt is open.
+            startup_account = None;
+        }
         if consent.directory_trust_persisted && !uses_remote_workspace {
             let previous_provider = config.model_provider_id.clone();
             config = load_config_or_exit_with_fallback_cwd(
@@ -2219,6 +2231,19 @@ async fn run_ratatui_app(
         && (config.model_provider.is_amazon_bedrock()
             || !matches!(app_server_target, AppServerTarget::Embedded));
     let guidance_request_handle = app_server.request_handle();
+    // Server-owned fresh starts bootstrap in App::run, which can reuse this account.
+    let fresh_start_account = if server_owned_fresh_bootstrap {
+        startup_account.take()
+    } else {
+        None
+    };
+    // This fresh start reads server defaults before any bootstrap request, so the read can
+    // overlap hooks/list once consent is settled.
+    let startup_defaults_cwd = server_owned_fresh_bootstrap.then(|| {
+        app::startup_bootstrap::fresh_startup_defaults_cwd(&config, &app_server, &app_server_target)
+            .to_path_buf()
+    });
+    let defaults_request_handle = app_server.request_handle();
     let startup_prefetch_started_at = Instant::now();
     // Fetch the catalog alongside hooks/list. Fresh starts choose the model after config/read.
     app_server.prefetch_model_list();
@@ -2239,16 +2264,30 @@ async fn run_ratatui_app(
                 async {
                     check_gov_cloud_guidance && check_gov_cloud(guidance_request_handle).await
                 },
+                async {
+                    let cwd = startup_defaults_cwd?;
+                    // A failed read is repeated by App::run, which reports it as before.
+                    let defaults = config_update::read_effective_config_with_layers(
+                        defaults_request_handle,
+                        &cwd,
+                    )
+                    .await
+                    .ok()?;
+                    Some(app::startup_bootstrap::PrefetchedStartupDefaults::new(
+                        cwd, defaults,
+                    ))
+                },
             )
         })
         .await;
-    let (startup_bootstrap, startup_hooks_entry, show_gov_cloud_guidance) = match startup_prefetch {
-        Ok(startup_prefetch) => startup_prefetch,
-        Err(err) => {
-            shutdown_startup_session(Some(app_server), &mut terminal_restore_guard).await;
-            return Err(err.into());
-        }
-    };
+    let (startup_bootstrap, startup_hooks_entry, show_gov_cloud_guidance, startup_defaults) =
+        match startup_prefetch {
+            Ok(startup_prefetch) => startup_prefetch,
+            Err(err) => {
+                shutdown_startup_session(Some(app_server), &mut terminal_restore_guard).await;
+                return Err(err.into());
+            }
+        };
     if let Err(err) = startup_draft.flush_pending_events(&mut tui).await {
         shutdown_startup_session(Some(app_server), &mut terminal_restore_guard).await;
         return Err(err.into());
@@ -2277,6 +2316,20 @@ async fn run_ratatui_app(
             tracing::warn!(%err, "Failed to save GovCloud guidance acknowledgment");
         }
     }
+    // Startup screens can outlast these reads; App::run repeats them after any screen.
+    let mut startup_reads = if show_gov_cloud_guidance
+        || startup_hooks_entry
+            .hooks
+            .iter()
+            .any(crate::hooks_rpc::hook_needs_review)
+    {
+        app::startup_bootstrap::StartupReads::default()
+    } else {
+        app::startup_bootstrap::StartupReads {
+            account: fresh_start_account,
+            defaults: startup_defaults,
+        }
+    };
     let startup_hooks_review = maybe_run_startup_hooks_review(
         &mut app_server,
         &mut tui,
@@ -2305,6 +2358,8 @@ async fn run_ratatui_app(
             .config_server
             .is_none()
     {
+        // Read again after this connection so its setup time cannot age the reused reads.
+        startup_reads = app::startup_bootstrap::StartupReads::default();
         // A daemon-backed resume can rebuild Config without the local transport handle.
         let mut cloud_config = config.clone();
         embedded_network_policy.bind_config(&mut cloud_config);
@@ -2348,6 +2403,7 @@ async fn run_ratatui_app(
         environment_manager,
         startup_elapsed_before_app,
         startup_bootstrap,
+        startup_reads,
         startup_hooks_browser,
         daemon_startup_warning,
         managed_daemon,

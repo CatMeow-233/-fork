@@ -424,6 +424,82 @@ async fn backfill_sessions_resumes_from_watermark_and_marks_complete() {
 }
 
 #[tokio::test]
+async fn backfill_sessions_applies_concurrent_extractions_in_watermark_order() {
+    let dir = tempdir().expect("tempdir");
+    let codex_home = dir.path().to_path_buf();
+    // The same thread appears in the first and last rollout, so the stored path shows whether
+    // the writes kept watermark order while extractions overlapped.
+    let repeated_uuid = Uuid::new_v4();
+    write_rollout_in_sessions(
+        codex_home.as_path(),
+        "2026-01-27T12-00-00",
+        "2026-01-27T12:00:00Z",
+        repeated_uuid,
+        /*git*/ None,
+    );
+    let filler_uuids: Vec<Uuid> = (1..=BACKFILL_EXTRACT_CONCURRENCY * 2 + 1)
+        .map(|minute| {
+            let uuid = Uuid::new_v4();
+            write_rollout_in_sessions(
+                codex_home.as_path(),
+                &format!("2026-01-27T12-{minute:02}-00"),
+                &format!("2026-01-27T12:{minute:02}:00Z"),
+                uuid,
+                /*git*/ None,
+            );
+            uuid
+        })
+        .collect();
+    let latest_path = write_rollout_in_sessions(
+        codex_home.as_path(),
+        "2026-01-27T13-00-00",
+        "2026-01-27T13:00:00Z",
+        repeated_uuid,
+        /*git*/ None,
+    );
+
+    let runtime = codex_state::StateRuntime::init(
+        codex_state::SqliteConfig::new_for_testing(codex_home.as_path().abs()),
+        "test-provider".to_string(),
+    )
+    .await
+    .expect("initialize runtime");
+
+    backfill_sessions(runtime.as_ref(), codex_home.as_path(), "test-provider").await;
+
+    let repeated_id = ThreadId::from_string(&repeated_uuid.to_string()).expect("thread id");
+    let repeated = runtime
+        .get_thread(repeated_id)
+        .await
+        .expect("get repeated thread")
+        .expect("repeated thread should be backfilled");
+    assert_eq!(repeated.rollout_path, latest_path);
+    for uuid in filler_uuids {
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("thread id");
+        assert!(
+            runtime
+                .get_thread(thread_id)
+                .await
+                .expect("get filler thread")
+                .is_some()
+        );
+    }
+
+    let state = runtime
+        .get_backfill_state()
+        .await
+        .expect("get backfill state");
+    assert_eq!(state.status, BackfillStatus::Complete);
+    assert_eq!(
+        state.last_watermark,
+        Some(backfill_watermark_for_path(
+            codex_home.as_path(),
+            latest_path.as_path()
+        ))
+    );
+}
+
+#[tokio::test]
 async fn backfill_sessions_preserves_existing_git_branch_and_fills_missing_git_fields() {
     let dir = tempdir().expect("tempdir");
     let codex_home = dir.path().to_path_buf();

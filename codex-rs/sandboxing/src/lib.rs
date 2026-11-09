@@ -16,11 +16,17 @@ mod windows;
 mod windows_mxc;
 
 #[cfg(target_os = "linux")]
+pub use bwrap::SystemBwrapCheck;
+#[cfg(target_os = "linux")]
+pub use bwrap::SystemBwrapProbe;
+#[cfg(target_os = "linux")]
 pub use bwrap::find_executable_in_search_paths;
 #[cfg(target_os = "linux")]
 pub use bwrap::find_pre_sandbox_executable_in_path;
 #[cfg(target_os = "linux")]
 pub use bwrap::find_system_bwrap_in_path;
+#[cfg(target_os = "linux")]
+pub use bwrap::system_bwrap_check;
 #[cfg(target_os = "linux")]
 pub use bwrap::system_bwrap_warning;
 pub use codex_mxc_sandbox::CODEX_WINDOWS_MXC_ARG1;
@@ -69,6 +75,34 @@ pub fn system_bwrap_warning(
     _sandbox_policy_cwd: &std::path::Path,
 ) -> Option<String> {
     None
+}
+
+/// Outcome of checking the system bubblewrap without launching it.
+#[cfg(not(target_os = "linux"))]
+pub enum SystemBwrapCheck {
+    /// The warning (if any) is known without running bubblewrap.
+    Decided(Option<String>),
+    /// Only launching bubblewrap can tell whether user namespaces are available.
+    NeedsProbe(SystemBwrapProbe),
+}
+
+/// Bubblewrap is Linux-only, so no probe is ever needed elsewhere.
+#[cfg(not(target_os = "linux"))]
+pub enum SystemBwrapProbe {}
+
+#[cfg(not(target_os = "linux"))]
+impl SystemBwrapProbe {
+    pub fn run(self) -> Option<String> {
+        match self {}
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn system_bwrap_check(
+    _permission_profile: &codex_protocol::models::PermissionProfile,
+    _sandbox_policy_cwd: &std::path::Path,
+) -> SystemBwrapCheck {
+    SystemBwrapCheck::Decided(None)
 }
 
 impl From<SandboxTransformError> for CodexErr {

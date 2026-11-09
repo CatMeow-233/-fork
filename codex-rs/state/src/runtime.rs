@@ -148,68 +148,97 @@ impl StateRuntime {
         let goals_path = sqlite.goals_db_path();
         let memories_path = sqlite.memories_db_path();
         let queue_path = sqlite.queue_db_path();
-        let pool = match sqlite
-            .open_state_db(&state_migrator, telemetry_override)
-            .await
-        {
-            Ok(db) => Arc::new(db),
+        // The databases are independent files, so open and migrate them concurrently:
+        // launch then waits for the slowest open instead of the sum of all five.
+        // On NFS each open may take the home's migration lock. NFS clients emulate it with
+        // process-wide POSIX locks, so overlapping opens would release it for each other:
+        // keep the serial order there. A failed probe also stays serial; the state open
+        // then reports the error as before.
+        let (state_db, logs_db, goals_db, memories_db, queue_db) =
+            if matches!(sqlite.is_nfs().await, Ok(false)) {
+                tokio::join!(
+                    sqlite.open_state_db(&state_migrator, telemetry_override),
+                    sqlite.open_logs_db(&logs_migrator, telemetry_override),
+                    sqlite.open_goals_db(&goals_migrator, telemetry_override),
+                    sqlite.open_memories_db(&memories_migrator, telemetry_override),
+                    sqlite.open_queue_db(&queue_migrator, telemetry_override),
+                )
+            } else {
+                let state_db = sqlite
+                    .open_state_db(&state_migrator, telemetry_override)
+                    .await;
+                let logs_db = open_after_success(
+                    &state_db,
+                    sqlite.open_logs_db(&logs_migrator, telemetry_override),
+                )
+                .await;
+                let goals_db = open_after_success(
+                    &logs_db,
+                    sqlite.open_goals_db(&goals_migrator, telemetry_override),
+                )
+                .await;
+                let memories_db = open_after_success(
+                    &goals_db,
+                    sqlite.open_memories_db(&memories_migrator, telemetry_override),
+                )
+                .await;
+                let queue_db = open_after_success(
+                    &memories_db,
+                    sqlite.open_queue_db(&queue_migrator, telemetry_override),
+                )
+                .await;
+                (state_db, logs_db, goals_db, memories_db, queue_db)
+            };
+        let (pool, logs_pool, goals_pool, memories_pool, queue_pool) =
+            match (state_db, logs_db, goals_db, memories_db, queue_db) {
+                (Ok(state), Ok(logs), Ok(goals), Ok(memories), Ok(queue)) => (
+                    Arc::new(state),
+                    Arc::new(logs),
+                    Arc::new(goals),
+                    Arc::new(memories),
+                    Arc::new(queue),
+                ),
+                opened => {
+                    let (state_db, logs_db, goals_db, memories_db, queue_db) = opened;
+                    let results = [
+                        ("state", &state_path, state_db),
+                        ("logs", &logs_path, logs_db),
+                        ("goals", &goals_path, goals_db),
+                        ("memories", &memories_path, memories_db),
+                        ("queue", &queue_path, queue_db),
+                    ];
+                    // Report the first failure in the original open order and release
+                    // every database that did open.
+                    let mut first_error = None;
+                    let mut opened_pools = Vec::new();
+                    for (name, path, result) in results {
+                        match result {
+                            Ok(pool) => opened_pools.push(pool),
+                            Err(err) if first_error.is_none() => {
+                                warn!("failed to open {name} db at {}: {err}", path.display());
+                                first_error = Some(err);
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    close_sqlite_pools(&opened_pools.iter().collect::<Vec<_>>()).await;
+                    return Err(first_error.unwrap_or_else(|| {
+                        anyhow::anyhow!("failed to open state runtime databases")
+                    }));
+                }
+            };
+        let has_memories_v2 = match tokio::fs::try_exists(sqlite.memories_v2_db_path()).await {
+            Ok(has_memories_v2) => has_memories_v2,
             Err(err) => {
-                warn!("failed to open state db at {}: {err}", state_path.display());
-                return Err(err);
-            }
-        };
-        let has_memories_v2 = tokio::fs::try_exists(sqlite.memories_v2_db_path()).await?;
-        let logs_pool = match sqlite
-            .open_logs_db(&logs_migrator, telemetry_override)
-            .await
-        {
-            Ok(db) => Arc::new(db),
-            Err(err) => {
-                warn!("failed to open logs db at {}: {err}", logs_path.display());
-                close_sqlite_pools(&[pool.as_ref()]).await;
-                return Err(err);
-            }
-        };
-        let goals_pool = match sqlite
-            .open_goals_db(&goals_migrator, telemetry_override)
-            .await
-        {
-            Ok(db) => Arc::new(db),
-            Err(err) => {
-                warn!("failed to open goals db at {}: {err}", goals_path.display());
-                close_sqlite_pools(&[pool.as_ref(), logs_pool.as_ref()]).await;
-                return Err(err);
-            }
-        };
-        let memories_pool = match sqlite
-            .open_memories_db(&memories_migrator, telemetry_override)
-            .await
-        {
-            Ok(db) => Arc::new(db),
-            Err(err) => {
-                warn!(
-                    "failed to open memories db at {}: {err}",
-                    memories_path.display()
-                );
-                close_sqlite_pools(&[pool.as_ref(), logs_pool.as_ref(), goals_pool.as_ref()]).await;
-                return Err(err);
-            }
-        };
-        let queue_pool = match sqlite
-            .open_queue_db(&queue_migrator, telemetry_override)
-            .await
-        {
-            Ok(db) => Arc::new(db),
-            Err(err) => {
-                warn!("failed to open queue db at {}: {err}", queue_path.display());
                 close_sqlite_pools(&[
                     pool.as_ref(),
                     logs_pool.as_ref(),
                     goals_pool.as_ref(),
                     memories_pool.as_ref(),
+                    queue_pool.as_ref(),
                 ])
                 .await;
-                return Err(err);
+                return Err(err.into());
             }
         };
         let started = Instant::now();
@@ -358,6 +387,21 @@ impl StateRuntime {
 async fn close_sqlite_pools(pools: &[&SqlitePool]) {
     for pool in pools {
         pool.close().await;
+    }
+}
+
+/// Opens the next database only after the previous one opened, like a serial `?` chain.
+/// Callers report the first error in open order, so the skip error itself is never surfaced.
+async fn open_after_success(
+    previous: &anyhow::Result<SqlitePool>,
+    open: impl Future<Output = anyhow::Result<SqlitePool>>,
+) -> anyhow::Result<SqlitePool> {
+    if previous.is_ok() {
+        open.await
+    } else {
+        Err(anyhow::anyhow!(
+            "skipped opening database after an earlier database failed to open"
+        ))
     }
 }
 
@@ -718,6 +762,46 @@ mod tests {
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
         assert_eq!(phases, expected);
+
+        runtime.close().await;
+        let _ = tokio::fs::remove_dir_all(codex_home).await;
+    }
+
+    #[tokio::test]
+    async fn init_reports_first_failed_database_in_open_order_and_stays_retryable() {
+        let codex_home = unique_temp_dir();
+        let sqlite = crate::SqliteConfig::new_for_testing(codex_home.as_path().abs());
+        let goals_path = sqlite.goals_db_path();
+        let queue_path = sqlite.queue_db_path();
+        // A directory where a database file belongs makes that open fail.
+        tokio::fs::create_dir_all(&goals_path)
+            .await
+            .expect("block goals db");
+        tokio::fs::create_dir_all(&queue_path)
+            .await
+            .expect("block queue db");
+
+        let err = match StateRuntime::init(sqlite.clone(), "test-provider".to_string()).await {
+            Ok(_) => panic!("blocked databases should fail to initialize"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().starts_with(&format!(
+                "failed to open goals DB at {}",
+                goals_path.display()
+            )),
+            "unexpected error: {err:#}"
+        );
+
+        tokio::fs::remove_dir(&goals_path)
+            .await
+            .expect("unblock goals db");
+        tokio::fs::remove_dir(&queue_path)
+            .await
+            .expect("unblock queue db");
+        let runtime = StateRuntime::init(sqlite, "test-provider".to_string())
+            .await
+            .expect("state runtime should initialize once unblocked");
 
         runtime.close().await;
         let _ = tokio::fs::remove_dir_all(codex_home).await;

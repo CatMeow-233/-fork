@@ -338,6 +338,7 @@ async fn local_projectless_defaults_respect_trust_scope_and_explicit_settings() 
             &[],
             &overrides,
             &EnvironmentManager::default_for_tests(),
+            /*prefetched*/ None,
         )
         .await?;
         if expected_approval.is_some() {

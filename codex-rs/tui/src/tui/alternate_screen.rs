@@ -3,7 +3,8 @@
 //! Push only on entry and pop before leaving or yielding input to an editor. The main screen
 //! keeps its own TUI mode until the handoff returns to it. Transcript surfaces retain pointer
 //! reporting across overlays and disable it before yielding. Promoting an overlay must not push
-//! another keyboard frame. Refresh tmux's input policy on entry for mouse-capture requests.
+//! another keyboard frame. Refresh tmux's input policy on entry for mouse-capture requests; the
+//! startup entry reuses the probe terminal init ran moments earlier.
 
 use std::io::Result;
 use std::io::Write;
@@ -96,7 +97,11 @@ impl AlternateScreen {
         writer.flush()?;
         self.parent_reports_key_releases
             .store(keyboard_modes::reports_key_releases(), Ordering::Relaxed);
-        let mouse_capture = keyboard_modes::enable_keyboard_enhancement(writer).mouse_capture;
+        let mouse_capture = keyboard_modes::enable_keyboard_enhancement_with(
+            writer,
+            tmux::startup_or_current_options(),
+        )
+        .mouse_capture;
         self.keyboard_active.store(
             !cfg!(windows) && !keyboard_modes::keyboard_enhancement_disabled(),
             Ordering::Relaxed,

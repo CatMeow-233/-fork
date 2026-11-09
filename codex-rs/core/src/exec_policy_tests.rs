@@ -334,6 +334,63 @@ async fn loads_policies_from_policy_subdirectory() {
 }
 
 #[tokio::test]
+async fn reloading_rules_reuses_clean_parse_only_for_identical_sources() -> anyhow::Result<()> {
+    let temp_dir = tempdir()?;
+    let config_stack = config_stack_for_dot_codex_folder(temp_dir.path());
+    let policy_dir = temp_dir.path().join(RULES_DIR_NAME);
+    fs::create_dir_all(&policy_dir)?;
+    fs::write(
+        policy_dir.join("a.rules"),
+        r#"prefix_rule(pattern=["rm"], decision="forbidden")"#,
+    )?;
+    let edited_path = policy_dir.join("b.rules");
+    fs::write(
+        &edited_path,
+        r#"prefix_rule(pattern=["ls"], decision="forbidden")"#,
+    )?;
+    let decisions = |policy: &Policy| {
+        ["rm", "ls"].map(|program| {
+            let command = [vec![program.to_string()]];
+            policy
+                .check_multiple(command.iter(), &|_| Decision::Allow)
+                .decision
+        })
+    };
+
+    let first = load_exec_policy(&config_stack).await?;
+    let unchanged = load_exec_policy(&config_stack).await?;
+    assert_eq!(
+        [Decision::Forbidden, Decision::Forbidden],
+        decisions(&first)
+    );
+    assert_eq!(decisions(&first), decisions(&unchanged));
+
+    // Editing one file reparses every file, including the unchanged one.
+    fs::write(
+        &edited_path,
+        r#"prefix_rule(pattern=["ls"], decision="prompt")"#,
+    )?;
+    let edited = load_exec_policy(&config_stack).await?;
+    assert_eq!([Decision::Forbidden, Decision::Prompt], decisions(&edited));
+
+    // Parse failures are reported for the broken file on every load.
+    fs::write(&edited_path, "prefix_rule(")?;
+    for _ in 0..2 {
+        let err = load_exec_policy(&config_stack)
+            .await
+            .expect_err("broken rules should fail to parse");
+        assert!(
+            matches!(
+                &err,
+                ExecPolicyError::ParsePolicy { path, .. } if path.ends_with("b.rules")
+            ),
+            "expected b.rules parse error, got {err:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn merges_requirements_exec_policy_network_rules() -> anyhow::Result<()> {
     let temp_dir = tempdir()?;
 

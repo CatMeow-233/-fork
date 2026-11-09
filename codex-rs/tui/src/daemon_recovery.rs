@@ -9,6 +9,7 @@ use crate::bottom_pane::ListSelectionView;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::daemon_startup;
+use crate::daemon_startup::Compatibility;
 use crate::daemon_startup::CompatibilityError;
 use crate::keymap::RuntimeKeymap;
 use crate::legacy_core::config::Config;
@@ -33,16 +34,16 @@ pub(super) async fn check(
     config: &Config,
     cli_kv_overrides: &[(String, toml::Value)],
     mut managed_daemon: bool,
-) -> io::Result<Option<String>> {
+) -> io::Result<Compatibility> {
     let issue = match startup
-        .run_until(daemon_startup::compatibility_warning(
+        .run_until(daemon_startup::check_compatibility(
             target,
             config,
             cli_kv_overrides,
         ))
         .await?
     {
-        Ok(warning) => return Ok(warning),
+        Ok(compatibility) => return Ok(compatibility),
         Err(issue) => issue,
     };
     if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
@@ -109,7 +110,7 @@ pub(super) async fn check(
     };
     tui.terminal.clear()?;
     match (selection, issue.restart_features.as_ref()) {
-        (Some(0), _) => Ok(Some(format!(
+        (Some(0), _) => Ok(Compatibility::Fallback(format!(
             "Running without the shared background server: {}.",
             issue.reason
         ))),
@@ -124,7 +125,7 @@ pub(super) async fn check(
             })
             .await?;
             startup
-                .run_until(daemon_startup::compatibility_warning(
+                .run_until(daemon_startup::check_compatibility(
                     target,
                     config,
                     cli_kv_overrides,

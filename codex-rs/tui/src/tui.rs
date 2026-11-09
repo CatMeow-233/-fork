@@ -506,6 +506,9 @@ pub(crate) fn init() -> Result<InitializedTerminal> {
     }
     let mut restore_guard = TerminalInitializationGuard { active: true };
     let tmux_options = set_modes()?;
+    let tmux_kitty_image_base = tmux_options.kitty_image_base;
+    // The startup screen enters the alternate screen next; spare it a second tmux probe.
+    tmux::retain_startup_options(tmux_options);
 
     set_panic_hook();
 
@@ -588,7 +591,7 @@ pub(crate) fn init() -> Result<InitializedTerminal> {
             .any(|key| std::env::var_os(key).is_some())
         && !crossterm::style::Colored::ansi_color_disabled_memoized()
     {
-        tui.tmux_kitty_image_base = tmux_options.kitty_image_base;
+        tui.tmux_kitty_image_base = tmux_kitty_image_base;
     }
     let stderr_guard = terminal_stderr::TerminalStderrGuard::install()?;
     let initialized_terminal = InitializedTerminal {

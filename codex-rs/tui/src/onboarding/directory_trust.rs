@@ -128,6 +128,7 @@ pub(crate) async fn check_directory_trust(
             return Ok(result);
         }
         consent.directory_trust_persisted |= result.directory_trust_persisted;
+        consent.screen_shown |= result.screen_shown;
         if matches!(target, AppServerTarget::LocalDaemon { .. })
             && let Some(thread) = resumed_thread
         {

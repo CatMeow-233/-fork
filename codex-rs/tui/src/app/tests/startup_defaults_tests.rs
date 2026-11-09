@@ -52,6 +52,7 @@ pub(super) async fn run_startup_for_test(
         Arc::new(EnvironmentManager::default_for_tests()),
         Duration::ZERO,
         bootstrap,
+        crate::app::startup_bootstrap::StartupReads::default(),
         /*startup_hooks_browser*/ None,
         /*daemon_startup_warning*/ None,
         /*managed_daemon*/ false,
@@ -460,6 +461,7 @@ requires_openai_auth = false
             &cli_kv_overrides,
             &harness_overrides,
             &EnvironmentManager::default_for_tests(),
+            /*prefetched*/ None,
         )
         .await?;
         if server_owned {
@@ -469,6 +471,7 @@ requires_openai_auth = false
                 &mut launch_choices,
                 &cli_kv_overrides,
                 &harness_overrides,
+                /*account*/ None,
             )
             .await?;
         }
@@ -676,6 +679,7 @@ async fn fresh_startup_reads_destination_and_cleared_model_uses_catalog() -> Res
             &[],
             &ConfigOverrides::default(),
             &EnvironmentManager::default_for_tests(),
+            /*prefetched*/ None,
         )
         .await?;
         assert!(!defaults_read.prompt_windows_sandbox);
@@ -807,6 +811,83 @@ async fn fresh_startup_observes_config_edits_after_directory_trust() -> Result<(
         (1, &serde_json::json!("flex"), 2),
     );
     proxy.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn fresh_startup_reuses_prefetched_defaults_only_for_the_same_cwd() -> Result<()> {
+    let home = tempdir()?;
+    let destination = tempdir()?;
+    let config_path = home.path().join("config.toml");
+    std::fs::write(&config_path, "service_tier = \"priority\"\n")?;
+    let config = ConfigBuilder::default()
+        .codex_home(home.path().to_path_buf())
+        .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(destination.path().to_path_buf()),
+            ..Default::default()
+        })
+        .build()
+        .await?;
+    let (server, requests, proxy) = start_recording_app_server_with_history(
+        &config,
+        HistoryCapabilities::Current,
+        /*blocked_thread_list*/ None,
+        /*failed_thread_name*/ None,
+        crate::app_server_session::ThreadParamsMode::Embedded,
+        LoaderOverrides {
+            user_config_path: Some(config_path.clone().abs()),
+            ..LoaderOverrides::default()
+        },
+    )
+    .await?;
+    let mut prefetched = Vec::new();
+    for cwd in [config.cwd.as_path(), home.path()] {
+        let defaults =
+            crate::config_update::read_effective_config_with_layers(server.request_handle(), cwd)
+                .await?;
+        prefetched.push(Some(
+            crate::app::startup_bootstrap::PrefetchedStartupDefaults::new(
+                cwd.to_path_buf(),
+                defaults,
+            ),
+        ));
+    }
+    prefetched.push(None);
+    std::fs::write(&config_path, "service_tier = \"flex\"\n")?;
+    let reads_before = recorded_params(&requests, "config/read").len();
+    let mut tiers = Vec::new();
+    for prefetched in prefetched {
+        let mut startup_config = config.clone();
+        prepare_fresh_startup_config(
+            &mut startup_config,
+            &server,
+            &AppServerTarget::Embedded,
+            &[],
+            &ConfigOverrides::default(),
+            &EnvironmentManager::default_for_tests(),
+            prefetched,
+        )
+        .await?;
+        tiers.push(startup_config.service_tier);
+    }
+    // Only a read for the startup cwd stands in for the request; others are repeated.
+    assert_eq!(
+        (
+            tiers,
+            recorded_params(&requests, "config/read").len() - reads_before
+        ),
+        (
+            vec![
+                Some("priority".to_string()),
+                Some("flex".to_string()),
+                Some("flex".to_string()),
+            ],
+            2,
+        ),
+    );
+    server.shutdown().await?;
+    proxy.await??;
     Ok(())
 }
 

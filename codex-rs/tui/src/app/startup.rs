@@ -7,7 +7,10 @@
 
 use super::backend_selection::NewBackendSession;
 use super::reconnect::ReconnectState;
+use super::startup_bootstrap::PrefetchedStartupDefaults;
+use super::startup_bootstrap::StartupReads;
 use super::startup_bootstrap::bootstrap_server_owned_start;
+use super::startup_bootstrap::fresh_startup_defaults_cwd;
 use super::startup_bootstrap::uses_server_owned_fresh_bootstrap;
 use super::*;
 use crate::session_start::SessionStartAction;
@@ -59,18 +62,19 @@ pub(super) async fn prepare_fresh_startup_config(
     cli_kv_overrides: &[(String, TomlValue)],
     harness_overrides: &ConfigOverrides,
     environments: &EnvironmentManager,
+    prefetched: Option<PrefetchedStartupDefaults>,
 ) -> Result<crate::projectless::AppliedDefaults> {
-    let defaults_cwd = match app_server_target {
-        AppServerTarget::Embedded | AppServerTarget::LocalDaemon { .. } => config.cwd.as_path(),
-        AppServerTarget::Remote { .. } | AppServerTarget::Cloud => {
-            app_server.remote_cwd_override().unwrap_or(Path::new("."))
+    let defaults_cwd = fresh_startup_defaults_cwd(config, app_server, app_server_target);
+    let defaults = match prefetched.and_then(|prefetched| prefetched.for_cwd(defaults_cwd)) {
+        Some(defaults) => defaults,
+        None => {
+            crate::config_update::read_effective_config_with_layers(
+                app_server.request_handle(),
+                defaults_cwd,
+            )
+            .await?
         }
     };
-    let defaults = crate::config_update::read_effective_config_with_layers(
-        app_server.request_handle(),
-        defaults_cwd,
-    )
-    .await?;
     super::new_session::overlay_new_session_defaults(
         config,
         &defaults.config,
@@ -266,6 +270,7 @@ impl App {
         environment_manager: Arc<EnvironmentManager>,
         startup_elapsed_before_app: Duration,
         startup_bootstrap: Option<AppServerBootstrap>,
+        startup_reads: StartupReads,
         startup_hooks_browser: Option<HooksListEntry>,
         daemon_startup_warning: Option<String>,
         managed_daemon: bool,
@@ -352,6 +357,10 @@ impl App {
         );
         let server_owned_fresh_bootstrap =
             uses_server_owned_fresh_bootstrap(&session_selection, &loader_overrides);
+        let StartupReads {
+            account: startup_account,
+            defaults: prefetched_startup_defaults,
+        } = startup_reads;
         let mut bootstrap = startup_bootstrap;
         if bootstrap.is_none() && !server_owned_fresh_bootstrap {
             bootstrap = Some(
@@ -392,6 +401,7 @@ impl App {
                         &cli_kv_overrides,
                         &harness_overrides,
                         &environment_manager,
+                        prefetched_startup_defaults,
                     ),
                 )
                 .await
@@ -423,6 +433,7 @@ impl App {
                         &mut launch_choices,
                         &cli_kv_overrides,
                         &harness_overrides,
+                        startup_account,
                     ),
                 )
                 .await

@@ -89,6 +89,14 @@ struct ApplicationPolicySnapshot {
     cloud: Option<codex_config::CloudConfigBundle>,
 }
 
+/// Every config-derived argument of the managed config loader built for one auth manager.
+#[derive(PartialEq)]
+struct ManagedConfigLoaderInputs<'a> {
+    chatgpt_base_url: &'a str,
+    http_client_factory: codex_http_client::HttpClientFactory,
+    requirements: &'a codex_config::ConfigRequirementsToml,
+}
+
 impl ConfigManager {
     pub(crate) fn new(
         codex_home: PathBuf,
@@ -206,14 +214,13 @@ impl ConfigManager {
             self.revoke_mcp_ema();
             return;
         }
+        let inputs = self.managed_config_loader_inputs(config);
         let loader = managed_config_bundle_loader(
             auth_manager,
-            config.chatgpt_base_url.clone(),
+            inputs.chatgpt_base_url.to_owned(),
             self.codex_home.clone(),
-            config
-                .http_client_factory()
-                .with_network_policy(self.local_network_policy.policy()),
-            config.config_layer_stack.requirements_toml(),
+            inputs.http_client_factory,
+            inputs.requirements,
         );
         if let Ok(mut guard) = self.cloud_config_bundle.write() {
             guard.retire_ema_policy();
@@ -222,6 +229,25 @@ impl ConfigManager {
             warn!("failed to update cloud config bundle loader");
         }
         self.revoke_mcp_ema();
+    }
+
+    /// Whether `update_managed_config_loader` builds the same loader from either config
+    /// for a given auth manager.
+    pub(crate) fn managed_config_loader_inputs_match(&self, left: &Config, right: &Config) -> bool {
+        self.managed_config_loader_inputs(left) == self.managed_config_loader_inputs(right)
+    }
+
+    fn managed_config_loader_inputs<'a>(
+        &self,
+        config: &'a Config,
+    ) -> ManagedConfigLoaderInputs<'a> {
+        ManagedConfigLoaderInputs {
+            chatgpt_base_url: &config.chatgpt_base_url,
+            http_client_factory: config
+                .http_client_factory()
+                .with_network_policy(self.local_network_policy.policy()),
+            requirements: config.config_layer_stack.requirements_toml(),
+        }
     }
 
     pub(crate) fn clear_chatgpt_config_loader(&self) {

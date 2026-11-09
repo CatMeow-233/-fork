@@ -15,6 +15,7 @@ use codex_http_client::HttpClientFactory;
 use codex_login::AuthManager;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::config_types::CollaborationModeMask;
+use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result as CoreResult;
 use codex_protocol::openai_models::ModelInfo;
@@ -108,7 +109,8 @@ pub enum RefreshStrategy {
     Online,
     /// Only use cached data, never fetch from the network.
     Offline,
-    /// Use cache if available and fresh, otherwise fetch from the network.
+    /// Use cache if available and fresh, otherwise fetch from the network. Default catalogs
+    /// reuse a request already in flight for the same credentials instead of sending another.
     OnlineIfUncached,
 }
 
@@ -333,26 +335,124 @@ pub type ModelsManagerFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a
 /// Shared model manager handle used across runtime services.
 pub type SharedModelsManager = Arc<dyn ModelsManager>;
 
-/// Only explicit catalogs serialize refresh and suppress bundled fallback. Auth and discovery
-/// settings are still evaluated when models are requested.
+/// Only explicit catalogs serialize refresh and suppress bundled fallback. Default catalogs
+/// instead let cache-aware loads share a concurrent request. Auth and discovery settings are
+/// still evaluated when models are requested.
 #[derive(Debug)]
 enum CatalogSource {
-    Default,
+    Default(CatalogFetchCoalescer),
     ExplicitProvider(Mutex<()>),
 }
 
 impl CatalogSource {
     fn fallback_models(&self) -> Option<Vec<ModelInfo>> {
         match self {
-            Self::Default => Some(load_remote_models_from_file().unwrap_or_default()),
+            Self::Default(_) => Some(load_remote_models_from_file().unwrap_or_default()),
             Self::ExplicitProvider(_) => None,
         }
     }
 
     async fn refresh_lock(&self) -> Option<MutexGuard<'_, ()>> {
         match self {
-            Self::Default => None,
+            Self::Default(_) => None,
             Self::ExplicitProvider(lock) => Some(lock.lock().await),
+        }
+    }
+
+    fn fetch_coalescer(&self) -> Option<&CatalogFetchCoalescer> {
+        match self {
+            Self::Default(fetches) => Some(fetches),
+            // Explicit catalogs already serialize every load behind `refresh_lock`.
+            Self::ExplicitProvider(_) => None,
+        }
+    }
+}
+
+/// What a cache-aware load reuses from a concurrent `/models` request.
+#[derive(Clone, Debug)]
+enum SharedFetchOutcome {
+    Succeeded,
+    Failed(String),
+}
+
+/// A `/models` request in progress for one endpoint identity.
+#[derive(Clone, Debug)]
+struct InFlightCatalogFetch {
+    identity: String,
+    outcome: watch::Receiver<Option<SharedFetchOutcome>>,
+}
+
+impl InFlightCatalogFetch {
+    /// Returns `None` when the request was dropped before it finished.
+    async fn wait(&mut self) -> Option<SharedFetchOutcome> {
+        let finished = self.outcome.wait_for(Option::is_some).await.ok()?;
+        Option::clone(&finished)
+    }
+}
+
+/// Lets concurrent loads of a default catalog share one `/models` request per identity.
+#[derive(Debug, Default)]
+struct CatalogFetchCoalescer {
+    // Only the most recently started request is shared; older ones finish unobserved.
+    latest: std::sync::Mutex<Option<InFlightCatalogFetch>>,
+}
+
+impl CatalogFetchCoalescer {
+    fn in_flight(&self, identity: Option<&str>) -> Option<InFlightCatalogFetch> {
+        let identity = identity?;
+        self.latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .filter(|fetch| fetch.identity == identity)
+            .cloned()
+    }
+
+    fn start(&self, identity: Option<String>) -> Option<CatalogFetchLeader<'_>> {
+        let identity = identity?;
+        let (outcome, receiver) = watch::channel(None);
+        let fetch = InFlightCatalogFetch {
+            identity,
+            outcome: receiver,
+        };
+        *self
+            .latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(fetch);
+        Some(CatalogFetchLeader {
+            coalescer: self,
+            outcome,
+        })
+    }
+}
+
+/// Publishes a request's outcome to its waiters. Dropping it unfinished lets them fetch.
+struct CatalogFetchLeader<'a> {
+    coalescer: &'a CatalogFetchCoalescer,
+    outcome: watch::Sender<Option<SharedFetchOutcome>>,
+}
+
+impl CatalogFetchLeader<'_> {
+    fn finish(self, result: &CoreResult<()>) {
+        self.outcome.send_replace(Some(match result {
+            Ok(()) => SharedFetchOutcome::Succeeded,
+            Err(err) => SharedFetchOutcome::Failed(err.to_string()),
+        }));
+    }
+}
+
+impl Drop for CatalogFetchLeader<'_> {
+    fn drop(&mut self) {
+        let mut latest = self
+            .coalescer
+            .latest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if latest
+            .as_ref()
+            .is_some_and(|fetch| fetch.outcome.same_channel(&self.outcome.subscribe()))
+        {
+            *latest = None;
         }
     }
 }
@@ -475,7 +575,7 @@ impl OpenAiModelsManager {
             })),
             settings,
             endpoint_client,
-            catalog_source: CatalogSource::Default,
+            catalog_source: CatalogSource::Default(CatalogFetchCoalescer::default()),
             auth_manager,
         }
     }
@@ -673,7 +773,7 @@ impl ModelsManager for OpenAiModelsManager {
                     | SelectedCatalog::Fallback(models) => models,
                 };
                 let model = match &self.catalog_source {
-                    CatalogSource::Default => find_model_from_candidates(model, models),
+                    CatalogSource::Default(_) => find_model_from_candidates(model, models),
                     CatalogSource::ExplicitProvider(_) => models
                         .iter()
                         .find(|candidate| candidate.slug == model)
@@ -805,8 +905,13 @@ impl OpenAiModelsManager {
             }
             CatalogLoadMode::Initialize
             | CatalogLoadMode::Refresh(RefreshStrategy::OnlineIfUncached) => {
+                // Observed before the cache read so a request finishing during it is reused.
+                let observed_fetch = self.in_flight_fetch();
                 if self.try_load_cache(mode).await {
                     return Ok(());
+                }
+                if let Some(result) = self.reuse_in_flight_fetch(observed_fetch).await {
+                    return result;
                 }
                 self.fetch_and_update_models(http_client_factory, mode)
                     .await
@@ -818,7 +923,50 @@ impl OpenAiModelsManager {
         }
     }
 
+    fn in_flight_fetch(&self) -> Option<InFlightCatalogFetch> {
+        self.catalog_source
+            .fetch_coalescer()?
+            .in_flight(self.endpoint_client.identity().as_deref())
+    }
+
+    /// Wait for a concurrent request for this identity instead of sending a duplicate.
+    /// Its failure is reported rather than retried, so waiters never pay a second timeout.
+    async fn reuse_in_flight_fetch(
+        &self,
+        observed_fetch: Option<InFlightCatalogFetch>,
+    ) -> Option<CoreResult<()>> {
+        let mut fetch = observed_fetch.or_else(|| self.in_flight_fetch())?;
+        let outcome = fetch.wait().await?;
+        // Credentials that changed during the request need a request of their own.
+        if self.endpoint_client.identity().as_deref() != Some(fetch.identity.as_str()) {
+            return None;
+        }
+        Some(match outcome {
+            SharedFetchOutcome::Succeeded => Ok(()),
+            SharedFetchOutcome::Failed(message) => {
+                Err(CodexErr::Io(std::io::Error::other(message)))
+            }
+        })
+    }
+
     async fn fetch_and_update_models(
+        &self,
+        http_client_factory: &HttpClientFactory,
+        mode: CatalogLoadMode,
+    ) -> CoreResult<()> {
+        // Online refreshes always send a request; cache-aware loads may wait on it.
+        let shared_fetch = self
+            .catalog_source
+            .fetch_coalescer()
+            .and_then(|fetches| fetches.start(self.endpoint_client.identity()));
+        let result = self.fetch_and_apply_models(http_client_factory, mode).await;
+        if let Some(shared_fetch) = shared_fetch {
+            shared_fetch.finish(&result);
+        }
+        result
+    }
+
+    async fn fetch_and_apply_models(
         &self,
         http_client_factory: &HttpClientFactory,
         mode: CatalogLoadMode,

@@ -60,6 +60,8 @@ mod imp {
     const MAX_TERMINAL_PROBE_BYTES: usize = 1024;
     const MAX_STARTUP_PROBE_BYTES: usize = 64 * 1024;
     const MAX_TERMINAL_CSI_BYTES: usize = 64;
+    /// Extra startup read time once DA1 or every field has arrived, for out-of-order replies.
+    const STARTUP_REPLY_GRACE: Duration = Duration::from_millis(/*millis*/ 25);
 
     static DA1_SUPPORTED: AtomicBool = AtomicBool::new(false);
 
@@ -307,17 +309,20 @@ mod imp {
         if keyboard_probe == StartupKeyboardEnhancementProbe::Query {
             query.extend_from_slice(b"\x1B[?u");
         }
-        // DA1 finishes keyboard detection and establishes whether we can use it at exit.
-        query.extend_from_slice(b"\x1B[c\x1B[6n\x1B]10;?\x1B\\\x1B]11;?\x1B\\");
+        query.extend_from_slice(b"\x1B[6n\x1B]10;?\x1B\\\x1B]11;?\x1B\\");
         if query_identity {
             query.extend_from_slice(b"\x1B[>c");
         }
+        // DA1 goes last: terminals answer in order, so its reply means unanswered queries will
+        // stay unanswered. It also finishes keyboard detection and establishes exit support.
+        query.extend_from_slice(b"\x1B[c");
         tty.write_all(&query)?;
 
         let mut buffer = Vec::new();
         let result = read_startup_probe(
             &mut tty,
             timeout,
+            STARTUP_REPLY_GRACE,
             keyboard_probe,
             query_identity,
             &mut buffer,
@@ -356,14 +361,21 @@ mod imp {
         }
     }
 
+    /// Reads startup replies until every field and the trailing DA1 reply have arrived.
+    ///
+    /// Seeing either one starts a short `grace` window, bounded by `timeout`, for replies the
+    /// terminal sends out of order. Fields still missing afterwards stay unknown, exactly as when
+    /// the full deadline expires.
     fn read_startup_probe(
         tty: &mut Tty,
         timeout: Duration,
+        grace: Duration,
         keyboard_probe: StartupKeyboardEnhancementProbe,
         query_identity: bool,
         buffer: &mut Vec<u8>,
     ) -> io::Result<StartupProbe> {
         let deadline = Instant::now() + timeout;
+        let mut grace_deadline = None;
         let mut probe = StartupProbe {
             cursor_position: None,
             default_colors: None,
@@ -379,15 +391,21 @@ mod imp {
                 buffer,
                 keyboard_probe,
             );
-            if startup_probe_complete(&probe, keyboard_probe) {
+            let complete = startup_probe_complete(&probe, keyboard_probe);
+            let saw_da1 = find_primary_device_attributes(buffer).is_some();
+            if complete && saw_da1 {
                 return Ok(probe);
             }
             let now = Instant::now();
-            if now >= deadline || buffer.len() >= MAX_STARTUP_PROBE_BYTES {
+            if (complete || saw_da1) && grace_deadline.is_none() {
+                grace_deadline = Some(deadline.min(now + grace));
+            }
+            let read_deadline = grace_deadline.unwrap_or(deadline);
+            if now >= read_deadline || buffer.len() >= MAX_STARTUP_PROBE_BYTES {
                 finish_startup_probe(&mut probe, keyboard_probe, saw_supported_keyboard);
                 return Ok(probe);
             }
-            if !tty.poll_readable(deadline.saturating_duration_since(now))? {
+            if !tty.poll_readable(read_deadline.saturating_duration_since(now))? {
                 finish_startup_probe(&mut probe, keyboard_probe, saw_supported_keyboard);
                 return Ok(probe);
             }
@@ -750,12 +768,156 @@ mod imp {
             let probe = read_startup_probe(
                 &mut tty,
                 Duration::from_millis(/*millis*/ 5),
+                STARTUP_REPLY_GRACE,
                 StartupKeyboardEnhancementProbe::Skip,
                 /*query_identity*/ true,
                 &mut buffer,
             )
             .expect("finish within probe deadline");
             assert_eq!(probe.terminal_app_over_ssh, None);
+        }
+
+        #[test]
+        fn trailing_da1_ends_the_wait_for_unanswered_queries() {
+            let mut tty = tty_with_buffered_input(b"\x1b[20;10R\x1b[?1;2c");
+            let mut buffer = Vec::new();
+            let started = Instant::now();
+            let probe = read_startup_probe(
+                &mut tty,
+                Duration::from_secs(/*secs*/ 30),
+                STARTUP_REPLY_GRACE,
+                StartupKeyboardEnhancementProbe::Query,
+                /*query_identity*/ true,
+                &mut buffer,
+            )
+            .expect("finish after the DA1 grace window");
+
+            assert!(started.elapsed() < Duration::from_secs(/*secs*/ 10));
+            assert_eq!(
+                probe,
+                StartupProbe {
+                    cursor_position: Some(Position { x: 9, y: 19 }),
+                    default_colors: None,
+                    keyboard_enhancement_supported: Some(false),
+                    terminal_app_over_ssh: None,
+                }
+            );
+        }
+
+        #[test]
+        fn trailing_da1_keeps_supported_keyboard_flags_without_other_replies() {
+            let mut tty = tty_with_buffered_input(b"\x1b[?7u\x1b[?1;2c");
+            let mut buffer = Vec::new();
+            let probe = read_startup_probe(
+                &mut tty,
+                Duration::from_secs(/*secs*/ 30),
+                STARTUP_REPLY_GRACE,
+                StartupKeyboardEnhancementProbe::Query,
+                /*query_identity*/ false,
+                &mut buffer,
+            )
+            .expect("finish after the DA1 grace window");
+
+            assert_eq!(
+                probe,
+                StartupProbe {
+                    cursor_position: None,
+                    default_colors: None,
+                    keyboard_enhancement_supported: Some(true),
+                    terminal_app_over_ssh: Some(false),
+                }
+            );
+        }
+
+        #[test]
+        fn grace_window_collects_replies_that_follow_da1() {
+            let (reader, writer) = UnixStream::pair().expect("create terminal input pair");
+            let mut late_writer = writer.try_clone().expect("clone terminal input writer");
+            let reader: OwnedFd = reader.into();
+            let writer: OwnedFd = writer.into();
+            let mut tty = Tty::new(reader.into(), writer.into()).expect("create terminal probe");
+            late_writer
+                .write_all(b"\x1b[20;10R\x1b[?1;2c")
+                .expect("buffer early replies");
+            let late_replies = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(/*millis*/ 20));
+                late_writer
+                    .write_all(b"\x1b]10;rgb:eeee/eeee/eeee\x07\x1b]11;rgb:1111/1111/1111\x07")
+                    .expect("send out-of-order color replies");
+            });
+            let mut buffer = Vec::new();
+            let started = Instant::now();
+            let probe = read_startup_probe(
+                &mut tty,
+                Duration::from_secs(/*secs*/ 30),
+                Duration::from_secs(/*secs*/ 30),
+                StartupKeyboardEnhancementProbe::Query,
+                /*query_identity*/ false,
+                &mut buffer,
+            )
+            .expect("read replies that follow DA1");
+            late_replies.join().expect("join late reply writer");
+
+            assert!(started.elapsed() < Duration::from_secs(/*secs*/ 10));
+            assert_eq!(
+                probe,
+                StartupProbe {
+                    cursor_position: Some(Position { x: 9, y: 19 }),
+                    default_colors: Some(DefaultColors {
+                        fg: (238, 238, 238),
+                        bg: (17, 17, 17),
+                    }),
+                    keyboard_enhancement_supported: Some(false),
+                    terminal_app_over_ssh: Some(false),
+                }
+            );
+        }
+
+        #[test]
+        fn skipped_keyboard_probe_still_drains_the_trailing_da1() {
+            let (reader, writer) = UnixStream::pair().expect("create terminal input pair");
+            let mut late_writer = writer.try_clone().expect("clone terminal input writer");
+            let reader: OwnedFd = reader.into();
+            let writer: OwnedFd = writer.into();
+            let mut tty = Tty::new(reader.into(), writer.into()).expect("create terminal probe");
+            late_writer
+                .write_all(
+                    b"\x1b[20;10R\x1b]10;rgb:eeee/eeee/eeee\x07\x1b]11;rgb:1111/1111/1111\x07",
+                )
+                .expect("buffer field replies");
+            let late_da1 = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(/*millis*/ 20));
+                late_writer
+                    .write_all(b"\x1b[?1;2c")
+                    .expect("send trailing DA1 reply");
+            });
+            let mut buffer = Vec::new();
+            let started = Instant::now();
+            let probe = read_startup_probe(
+                &mut tty,
+                Duration::from_secs(/*secs*/ 30),
+                Duration::from_secs(/*secs*/ 30),
+                StartupKeyboardEnhancementProbe::Skip,
+                /*query_identity*/ false,
+                &mut buffer,
+            )
+            .expect("read the trailing DA1 reply");
+            late_da1.join().expect("join late DA1 writer");
+
+            assert!(started.elapsed() < Duration::from_secs(/*secs*/ 10));
+            assert_eq!(find_primary_device_attributes(&buffer), Some(()));
+            assert_eq!(
+                probe,
+                StartupProbe {
+                    cursor_position: Some(Position { x: 9, y: 19 }),
+                    default_colors: Some(DefaultColors {
+                        fg: (238, 238, 238),
+                        bg: (17, 17, 17),
+                    }),
+                    keyboard_enhancement_supported: None,
+                    terminal_app_over_ssh: Some(false),
+                }
+            );
         }
 
         #[test]
@@ -770,6 +932,7 @@ mod imp {
             let probe = read_startup_probe(
                 &mut tty,
                 Duration::from_secs(/*secs*/ 1),
+                STARTUP_REPLY_GRACE,
                 StartupKeyboardEnhancementProbe::Query,
                 /*query_identity*/ false,
                 &mut buffer,

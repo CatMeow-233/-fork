@@ -40,6 +40,37 @@ fn ring_buffer_drops_front_when_full() {
 }
 
 #[test]
+fn ring_buffer_retains_trailing_bytes_for_any_write_size() {
+    // Mix empty, small, exact-capacity and oversized writes so the deque wraps.
+    let write_sizes = [0, 1, 3, 7, 8, 9, 20, 2, 5, 13, 14];
+    for capacity in [0, 1, 8, 13] {
+        let mut ring = RingBuffer::new(capacity);
+        let mut written = Vec::new();
+        let mut next_byte = 0u8;
+        for round in 0..3 {
+            for size in write_sizes {
+                let chunk = (0..size)
+                    .map(|_| {
+                        next_byte = next_byte.wrapping_add(1);
+                        next_byte
+                    })
+                    .collect::<Vec<u8>>();
+                ring.push_bytes(&chunk);
+                written.extend_from_slice(&chunk);
+
+                let expected = written[written.len().saturating_sub(capacity)..].to_vec();
+                assert_eq!(
+                    ring.snapshot_bytes(),
+                    expected,
+                    "capacity {capacity}, round {round}, write size {size}"
+                );
+                assert_eq!(ring.len(), expected.len());
+            }
+        }
+    }
+}
+
+#[test]
 fn logger_layer_filters_noisy_trace_payloads() {
     let fb = CodexFeedback::new();
     let _guard = tracing_subscriber::registry()

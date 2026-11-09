@@ -3,6 +3,7 @@
 
 use crate::Daemon;
 use crate::LifecycleOutput;
+use crate::ManagedVersion;
 use crate::ensure_supported_platform;
 use crate::telemetry::StartError;
 use anyhow::Result;
@@ -23,6 +24,25 @@ pub async fn start_with_features(features: &BTreeMap<String, bool>) -> Result<Li
 pub async fn start_with_features_classified(
     features: &BTreeMap<String, bool>,
 ) -> Result<LifecycleOutput, StartError> {
+    start_classified(features, ManagedVersion::Lookup).await
+}
+
+/// Starts the daemon for an interactive session that only needs its socket and backend.
+///
+/// Unlike [`start_with_features_classified`], the output omits
+/// `managed_codex_version`: looking it up executes the managed binary with
+/// `--version` while the lifecycle lock is held, which a TUI launch would pay on
+/// every start without using the result.
+pub async fn start_for_session_classified(
+    features: &BTreeMap<String, bool>,
+) -> Result<LifecycleOutput, StartError> {
+    start_classified(features, ManagedVersion::Skip).await
+}
+
+async fn start_classified(
+    features: &BTreeMap<String, bool>,
+    managed_version: ManagedVersion,
+) -> Result<LifecycleOutput, StartError> {
     ensure_supported_platform()?;
     #[cfg(windows)]
     crate::backend::windows::ensure_not_elevated()?;
@@ -32,7 +52,7 @@ pub async fn start_with_features_classified(
     let selected = daemon.current_installation()?;
     let mut overrides = selected.load_settings().await?.feature_overrides;
     overrides.extend(features.clone());
-    Box::pin(selected.start(&overrides)).await
+    Box::pin(selected.start_with_managed_version(&overrides, managed_version)).await
 }
 
 /// Apply confirmed feature settings to an existing managed daemon and restart it.

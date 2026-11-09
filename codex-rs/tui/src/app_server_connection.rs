@@ -13,6 +13,59 @@ use codex_app_server_client::RemoteAppServerConnectArgs;
 use codex_app_server_client::RemoteAppServerEndpoint;
 #[cfg(windows)]
 use codex_utils_absolute_path::AbsolutePathBuf;
+use std::time::Duration;
+use std::time::Instant;
+
+/// A longer gap means an interactive screen ran in between, during which the daemon may
+/// have restarted; redialing then costs little compared with the wait.
+const PREPARED_CONNECTION_MAX_AGE: Duration = Duration::from_secs(2);
+
+/// An initialized connection that startup checks already opened, kept for the first
+/// session connect so it does not repeat the socket and `initialize` handshakes.
+pub(crate) struct PreparedConnection {
+    target: AppServerTarget,
+    // Boxed to keep the startup future and `Compatibility` variants small.
+    client: Box<AppServerClient>,
+    opened_at: Instant,
+}
+
+impl PreparedConnection {
+    /// `client` must come from [`connect`] for `target`, so it matches a fresh connection.
+    pub(crate) fn new(target: AppServerTarget, client: AppServerClient) -> Self {
+        Self {
+            target,
+            client: Box::new(client),
+            opened_at: Instant::now(),
+        }
+    }
+
+    /// Returns the client if it was opened recently for `target`; otherwise closes it.
+    pub(crate) async fn take_for(self, target: &AppServerTarget) -> Option<AppServerClient> {
+        self.take_for_at(target, Instant::now()).await
+    }
+
+    pub(crate) async fn take_for_at(
+        self,
+        target: &AppServerTarget,
+        now: Instant,
+    ) -> Option<AppServerClient> {
+        if self.target == *target
+            && now.saturating_duration_since(self.opened_at) <= PREPARED_CONNECTION_MAX_AGE
+        {
+            return Some(*self.client);
+        }
+        let _ = self.client.shutdown().await;
+        None
+    }
+}
+
+impl std::fmt::Debug for PreparedConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedConnection")
+            .field("target", &self.target)
+            .finish_non_exhaustive()
+    }
+}
 
 pub(crate) async fn connect(target: &AppServerTarget) -> color_eyre::Result<AppServerClient> {
     match target {

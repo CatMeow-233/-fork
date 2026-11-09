@@ -769,6 +769,40 @@ async fn policy_files(stack: &ConfigLayerStack) -> Result<Vec<PathBuf>, ExecPoli
     Ok(policy_paths)
 }
 
+/// One rules file's parser identifier and contents.
+#[derive(PartialEq, Eq)]
+struct PolicySource {
+    identifier: String,
+    contents: String,
+}
+
+/// Rules files, in load order, together with the policy they parsed into without error.
+struct ParsedPolicySources {
+    sources: Vec<PolicySource>,
+    policy: Policy,
+}
+
+/// Startup loads the same unchanged rules several times (initialize, thread/start, and the
+/// session itself). Parsing is deterministic in each file's identifier and contents, so an
+/// identical source list can reuse the last clean parse instead of re-evaluating Starlark.
+static LAST_PARSED_POLICY: std::sync::Mutex<Option<Arc<ParsedPolicySources>>> =
+    std::sync::Mutex::new(None);
+
+fn parse_policy_sources(
+    parser: &mut PolicyParser,
+    sources: &[PolicySource],
+) -> Result<(), ExecPolicyError> {
+    for source in sources {
+        parser
+            .parse(&source.identifier, &source.contents)
+            .map_err(|err| ExecPolicyError::ParsePolicy {
+                path: source.identifier.clone(),
+                source: err,
+            })?;
+    }
+    Ok(())
+}
+
 pub async fn load_exec_policy(config_stack: &ConfigLayerStack) -> Result<Policy, ExecPolicyError> {
     let policy_paths = policy_files(config_stack).await?;
     tracing::trace!(
@@ -776,7 +810,16 @@ pub async fn load_exec_policy(config_stack: &ConfigLayerStack) -> Result<Policy,
         "loaded exec policies"
     );
 
+    let cached = LAST_PARSED_POLICY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     let mut parser = PolicyParser::new();
+    let mut sources = Vec::with_capacity(policy_paths.len());
+    // Sources before `parsed` have been fed to `parser`. Parsing is deferred only while every
+    // source read so far matches the cached set, which parsed cleanly, so errors still surface
+    // for the same file as an eager read-then-parse loop.
+    let mut parsed = 0;
     for policy_path in &policy_paths {
         let contents =
             fs::read_to_string(policy_path)
@@ -785,16 +828,38 @@ pub async fn load_exec_policy(config_stack: &ConfigLayerStack) -> Result<Policy,
                     path: policy_path.clone(),
                     source,
                 })?;
-        let identifier = policy_path.to_string_lossy().to_string();
-        parser
-            .parse(&identifier, &contents)
-            .map_err(|source| ExecPolicyError::ParsePolicy {
-                path: identifier,
-                source,
-            })?;
+        let index = sources.len();
+        sources.push(PolicySource {
+            identifier: policy_path.to_string_lossy().to_string(),
+            contents,
+        });
+        let matches_cached = parsed == 0
+            && cached
+                .as_ref()
+                .is_some_and(|cached| cached.sources.get(index) == sources.last());
+        if !matches_cached {
+            parse_policy_sources(&mut parser, &sources[parsed..])?;
+            parsed = sources.len();
+        }
     }
 
-    let policy = parser.build();
+    let policy = match cached {
+        Some(cached) if parsed == 0 && cached.sources.len() == sources.len() => {
+            cached.policy.clone()
+        }
+        _ => {
+            parse_policy_sources(&mut parser, &sources[parsed..])?;
+            let policy = parser.build();
+            *LAST_PARSED_POLICY
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(Arc::new(ParsedPolicySources {
+                    sources,
+                    policy: policy.clone(),
+                }));
+            policy
+        }
+    };
     tracing::debug!("loaded rules from {} files", policy_paths.len());
     tracing::trace!(rules = ?policy, "exec policy rules loaded");
 

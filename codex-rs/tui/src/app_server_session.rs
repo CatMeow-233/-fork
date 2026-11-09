@@ -653,8 +653,8 @@ impl AppServerSession {
         let worktrees = if !self.uses_remote_workspace() && !config.active_project.is_untrusted() {
             // Listing a fresh, nonexistent thread is read-only and returns an empty page
             // on supported stores. Probe before advertising tools or allocating a checkout.
-            let support = self
-                .request_handle()
+            let request_handle = self.request_handle();
+            let support = request_handle
                 .request_typed::<codex_app_server_protocol::ThreadAttachmentListResponse>(
                     ClientRequest::ThreadAttachmentList {
                         request_id: RequestId::String(uuid::Uuid::new_v4().to_string()),
@@ -664,24 +664,26 @@ impl AppServerSession {
                             limit: Some(1),
                         },
                     },
-                )
-                .await;
-            match support {
-                Err(error) => {
+                );
+            // Loading the host settings only reads config files, so overlap it with the probe.
+            let (support, service) = tokio::join!(
+                support,
+                crate::managed_worktree_tools::ManagedWorktreeTools::new(&config)
+            );
+            match (support, service) {
+                (Err(error), _) => {
                     tracing::warn!(%error, "managed worktree attachment storage unavailable");
                     None
                 }
-                Ok(_) => {
-                    match crate::managed_worktree_tools::ManagedWorktreeTools::new(&config).await {
-                        Ok(service) => Some(match self.worktree_source_config_builder.as_deref() {
-                            Some(builder) => service.with_source_config_builder(builder.clone()),
-                            None => service,
-                        }),
-                        Err(error) => {
-                            tracing::warn!(%error, "managed worktree tools unavailable");
-                            None
-                        }
-                    }
+                (Ok(_), Ok(service)) => {
+                    Some(match self.worktree_source_config_builder.as_deref() {
+                        Some(builder) => service.with_source_config_builder(builder.clone()),
+                        None => service,
+                    })
+                }
+                (Ok(_), Err(error)) => {
+                    tracing::warn!(%error, "managed worktree tools unavailable");
+                    None
                 }
             }
         } else {
@@ -868,10 +870,22 @@ impl AppServerSession {
         let started_at = Instant::now();
         let account = self.read_account().await?;
         let mut bootstrap = self
-            .bootstrap_with_account_inner(config, account, EmptyCatalogFallback::ManagedNewThread)
+            .bootstrap_for_new_thread_with_account(config, account)
             .await?;
         bootstrap.duration = started_at.elapsed();
         Ok(bootstrap)
+    }
+
+    /// Bootstraps a new thread using a previously read account.
+    ///
+    /// Callers must discard a prefetched account after authentication, server, or provider changes.
+    pub(crate) async fn bootstrap_for_new_thread_with_account(
+        &mut self,
+        config: &Config,
+        account: GetAccountResponse,
+    ) -> Result<AppServerBootstrap> {
+        self.bootstrap_with_account_inner(config, account, EmptyCatalogFallback::ManagedNewThread)
+            .await
     }
 
     /// Bootstraps using a previously read account.
@@ -3293,6 +3307,42 @@ mod tests {
         app_server.bootstrap(&config).await?;
 
         assert_eq!(app_server.next_request_id, next_request_id + 3);
+        app_server.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn new_thread_bootstrap_reuses_prefetched_account_without_another_account_read()
+    -> Result<()> {
+        let codex_home = tempfile::tempdir()?;
+        let config = build_config(&codex_home).await;
+        let mut app_server = crate::start_embedded_app_server_for_picker(&config).await?;
+        let account = app_server.read_account().await?;
+        let next_request_id = app_server.next_request_id;
+
+        let reused = app_server
+            .bootstrap_for_new_thread_with_account(&config, account)
+            .await?;
+        assert_eq!(app_server.next_request_id, next_request_id + 2);
+        let read = app_server.bootstrap_for_new_thread(&config).await?;
+        assert_eq!(app_server.next_request_id, next_request_id + 5);
+
+        assert_eq!(
+            (
+                reused.account_email,
+                reused.auth_mode,
+                reused.requires_openai_auth,
+                reused.default_model,
+                reused.available_models,
+            ),
+            (
+                read.account_email,
+                read.auth_mode,
+                read.requires_openai_auth,
+                read.default_model,
+                read.available_models,
+            )
+        );
         app_server.shutdown().await?;
         Ok(())
     }

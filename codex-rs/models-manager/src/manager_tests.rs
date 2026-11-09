@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::task::Poll;
 use tempfile::tempdir;
 
 #[path = "api_key_discovery_tests.rs"]
@@ -1844,6 +1845,217 @@ async fn refresh_available_models_fetches_with_chatgpt_auth_tokens() {
         1,
         "endpoint should fetch models with ChatGPT auth tokens"
     );
+}
+
+/// Holds every `/models` request until released so tests can overlap loads deterministically.
+#[derive(Debug)]
+struct GatedModelsEndpoint {
+    responses: Mutex<VecDeque<CoreResult<Vec<ModelInfo>>>>,
+    fetch_count: AtomicUsize,
+    released: watch::Sender<bool>,
+}
+
+impl GatedModelsEndpoint {
+    fn new(responses: Vec<CoreResult<Vec<ModelInfo>>>) -> Arc<Self> {
+        Arc::new(Self {
+            responses: Mutex::new(responses.into()),
+            fetch_count: AtomicUsize::new(0),
+            released: watch::Sender::new(false),
+        })
+    }
+
+    fn fetch_count(&self) -> usize {
+        self.fetch_count.load(Ordering::SeqCst)
+    }
+
+    fn release(&self) {
+        self.released.send_replace(true);
+    }
+
+    async fn list_models(&self) -> CoreResult<ModelsEndpointResponse> {
+        self.fetch_count.fetch_add(1, Ordering::SeqCst);
+        let mut released = self.released.subscribe();
+        let _ = released.wait_for(|is_released| *is_released).await;
+        let models = self
+            .responses
+            .lock()
+            .expect("responses lock should not be poisoned")
+            .pop_front()
+            .unwrap_or_else(|| Ok(Vec::new()))?;
+        Ok(ModelsEndpointResponse {
+            models,
+            etag: None,
+            identity: self.identity().expect("test endpoint identity"),
+        })
+    }
+}
+
+impl ModelsEndpointClient for GatedModelsEndpoint {
+    fn identity(&self) -> Option<String> {
+        Some("test-provider".to_string())
+    }
+
+    fn has_command_auth(&self) -> bool {
+        false
+    }
+
+    fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool> {
+        Box::pin(async { true })
+    }
+
+    fn list_models<'a>(
+        &'a self,
+        _client_version: &'a str,
+        _http_client_factory: HttpClientFactory,
+    ) -> ModelsEndpointFuture<'a, CoreResult<ModelsEndpointResponse>> {
+        Box::pin(GatedModelsEndpoint::list_models(self))
+    }
+}
+
+fn gated_manager_for_tests(endpoint: Arc<GatedModelsEndpoint>) -> OpenAiModelsManager {
+    // Without a cache, every cache-aware load would otherwise send its own request.
+    OpenAiModelsManager::new_without_cache(
+        endpoint,
+        Some(AuthManager::from_auth_for_testing(
+            CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+        )),
+    )
+}
+
+/// Polls once so a load runs up to its first real suspension point.
+async fn poll_once<F: Future + Unpin>(future: &mut F) -> Poll<F::Output> {
+    std::future::poll_fn(|cx| Poll::Ready(Pin::new(&mut *future).poll(cx))).await
+}
+
+#[tokio::test]
+async fn cache_aware_loads_reuse_an_in_flight_online_fetch() {
+    let remote_models = vec![remote_model("remote", "Remote", /*priority*/ 0)];
+    let endpoint = GatedModelsEndpoint::new(vec![Ok(remote_models.clone())]);
+    let manager = gated_manager_for_tests(endpoint.clone());
+    let http_client_factory = DEFAULT_HTTP_CLIENT_FACTORY;
+
+    let mut online =
+        Box::pin(manager.refresh_available_models(RefreshStrategy::Online, &http_client_factory));
+    assert!(poll_once(&mut online).await.is_pending());
+    assert_eq!(endpoint.fetch_count(), 1);
+
+    // Cache-only and in-memory reads never wait for the request.
+    assert!(
+        poll_once(&mut Box::pin(manager.refresh_available_models(
+            RefreshStrategy::Offline,
+            &http_client_factory,
+        )))
+        .await
+        .is_ready()
+    );
+    assert!(
+        poll_once(
+            &mut manager.raw_model_catalog(RefreshStrategy::InMemory, DEFAULT_HTTP_CLIENT_FACTORY)
+        )
+        .await
+        .is_ready()
+    );
+
+    let mut if_uncached = Box::pin(
+        manager.refresh_available_models(RefreshStrategy::OnlineIfUncached, &http_client_factory),
+    );
+    let mut initialize = manager.ensure_initialized(DEFAULT_HTTP_CLIENT_FACTORY);
+    assert!(poll_once(&mut if_uncached).await.is_pending());
+    assert!(poll_once(&mut initialize).await.is_pending());
+
+    endpoint.release();
+    let (online, if_uncached, ()) = tokio::join!(online, if_uncached, initialize);
+    online.expect("online refresh succeeds");
+    if_uncached.expect("waiting refresh reuses the online fetch");
+    assert_eq!(manager.get_remote_models().await, remote_models);
+    assert_eq!(endpoint.fetch_count(), 1, "expected a single model fetch");
+}
+
+#[tokio::test]
+async fn cache_aware_loads_do_not_retry_a_failed_in_flight_fetch() {
+    let remote_models = vec![remote_model("remote", "Remote", /*priority*/ 0)];
+    let endpoint = GatedModelsEndpoint::new(vec![
+        Err(CodexErr::RequestTimeout),
+        Ok(remote_models.clone()),
+    ]);
+    let manager = gated_manager_for_tests(endpoint.clone());
+    let bundled_models = manager.get_remote_models().await;
+    let http_client_factory = DEFAULT_HTTP_CLIENT_FACTORY;
+
+    let mut leader = Box::pin(
+        manager.refresh_available_models(RefreshStrategy::OnlineIfUncached, &http_client_factory),
+    );
+    assert!(poll_once(&mut leader).await.is_pending());
+    let mut waiter = Box::pin(
+        manager.refresh_available_models(RefreshStrategy::OnlineIfUncached, &http_client_factory),
+    );
+    assert!(poll_once(&mut waiter).await.is_pending());
+
+    endpoint.release();
+    let (leader, waiter) = tokio::join!(leader, waiter);
+    let leader_error = leader.expect_err("leader fetch fails");
+    let waiter_error = waiter.expect_err("waiter reports the shared failure");
+    assert_eq!(waiter_error.to_string(), leader_error.to_string());
+    assert_eq!(manager.get_remote_models().await, bundled_models);
+    assert_eq!(endpoint.fetch_count(), 1, "waiter must not refetch");
+
+    // A finished failure does not suppress later loads.
+    manager
+        .refresh_available_models(RefreshStrategy::OnlineIfUncached, &http_client_factory)
+        .await
+        .expect("later refresh succeeds");
+    assert_eq!(manager.get_remote_models().await, remote_models);
+    assert_eq!(endpoint.fetch_count(), 2);
+}
+
+#[tokio::test]
+async fn online_refresh_does_not_wait_on_an_in_flight_fetch() {
+    let endpoint = GatedModelsEndpoint::new(vec![
+        Ok(vec![remote_model("first", "First", /*priority*/ 0)]),
+        Ok(vec![remote_model("second", "Second", /*priority*/ 0)]),
+    ]);
+    let manager = gated_manager_for_tests(endpoint.clone());
+    let http_client_factory = DEFAULT_HTTP_CLIENT_FACTORY;
+
+    let mut if_uncached = Box::pin(
+        manager.refresh_available_models(RefreshStrategy::OnlineIfUncached, &http_client_factory),
+    );
+    assert!(poll_once(&mut if_uncached).await.is_pending());
+    let mut online =
+        Box::pin(manager.refresh_available_models(RefreshStrategy::Online, &http_client_factory));
+    assert!(poll_once(&mut online).await.is_pending());
+    assert_eq!(
+        endpoint.fetch_count(),
+        2,
+        "online refresh sends its own request"
+    );
+
+    endpoint.release();
+    let (if_uncached, online) = tokio::join!(if_uncached, online);
+    if_uncached.expect("cache-aware refresh succeeds");
+    online.expect("online refresh succeeds");
+}
+
+#[tokio::test]
+async fn explicit_provider_catalog_does_not_share_fetches() {
+    let models = vec![remote_model(
+        "provider-model",
+        "Provider",
+        /*priority*/ 0,
+    )];
+    let endpoint = TestModelsEndpoint::with_command_auth(vec![Ok(models.clone())]);
+    let manager = OpenAiModelsManager::new_without_cache(endpoint, /*auth_manager*/ None)
+        .with_provider_catalog();
+
+    assert!(manager.catalog_source.fetch_coalescer().is_none());
+    assert_eq!(
+        manager
+            .raw_model_catalog(RefreshStrategy::Online, DEFAULT_HTTP_CLIENT_FACTORY)
+            .await
+            .models,
+        models
+    );
+    assert!(manager.in_flight_fetch().is_none());
 }
 
 #[test]

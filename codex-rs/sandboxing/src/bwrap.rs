@@ -39,22 +39,59 @@ const USER_NAMESPACE_FAILURES: [&str; 4] = [
     "No permissions to create a new namespace",
 ];
 const SYSTEM_BWRAP_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
-const SYSTEM_BWRAP_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+// `bwrap ... /bin/true` usually exits within a few milliseconds; poll finely so the
+// probe does not round its cost up to a coarse interval.
+const SYSTEM_BWRAP_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const SYSTEM_BWRAP_PROBE_STDERR_LIMIT_BYTES: u64 = 64 * 1024;
 
 pub fn system_bwrap_warning(
     permission_profile: &PermissionProfile,
     sandbox_policy_cwd: &Path,
 ) -> Option<String> {
+    match system_bwrap_check(permission_profile, sandbox_policy_cwd) {
+        SystemBwrapCheck::Decided(warning) => warning,
+        SystemBwrapCheck::NeedsProbe(probe) => probe.run(),
+    }
+}
+
+/// Outcome of checking the system bubblewrap without launching it.
+pub enum SystemBwrapCheck {
+    /// The warning (if any) is known without running bubblewrap.
+    Decided(Option<String>),
+    /// Only launching bubblewrap can tell whether user namespaces are available.
+    NeedsProbe(SystemBwrapProbe),
+}
+
+/// The bubblewrap launch that decides whether to warn about user namespaces.
+pub struct SystemBwrapProbe {
+    system_bwrap_path: PathBuf,
+}
+
+impl SystemBwrapProbe {
+    /// Launch bubblewrap and wait for it; blocks for up to the probe timeout.
+    pub fn run(self) -> Option<String> {
+        (!system_bwrap_has_user_namespace_access(
+            &self.system_bwrap_path,
+            SYSTEM_BWRAP_PROBE_TIMEOUT,
+        ))
+        .then(|| USER_NAMESPACE_WARNING.to_string())
+    }
+}
+
+/// Split the warning check so callers can run only the subprocess off their task.
+pub fn system_bwrap_check(
+    permission_profile: &PermissionProfile,
+    sandbox_policy_cwd: &Path,
+) -> SystemBwrapCheck {
     if !should_warn_about_system_bwrap(permission_profile) {
-        return None;
+        return SystemBwrapCheck::Decided(None);
     }
 
     let system_bwrap_path = find_system_bwrap_in_path(
         &permission_profile.file_system_sandbox_policy(),
         sandbox_policy_cwd,
     );
-    system_bwrap_warning_for_path(system_bwrap_path.as_deref())
+    system_bwrap_check_for_path(system_bwrap_path)
 }
 
 fn should_warn_about_system_bwrap(permission_profile: &PermissionProfile) -> bool {
@@ -66,20 +103,24 @@ fn should_warn_about_system_bwrap(permission_profile: &PermissionProfile) -> boo
     )
 }
 
+#[cfg(test)]
 fn system_bwrap_warning_for_path(system_bwrap_path: Option<&Path>) -> Option<String> {
+    match system_bwrap_check_for_path(system_bwrap_path.map(Path::to_path_buf)) {
+        SystemBwrapCheck::Decided(warning) => warning,
+        SystemBwrapCheck::NeedsProbe(probe) => probe.run(),
+    }
+}
+
+fn system_bwrap_check_for_path(system_bwrap_path: Option<PathBuf>) -> SystemBwrapCheck {
     if is_wsl1() {
-        return Some(WSL1_BWRAP_WARNING.to_string());
+        return SystemBwrapCheck::Decided(Some(WSL1_BWRAP_WARNING.to_string()));
     }
 
     let Some(system_bwrap_path) = system_bwrap_path else {
-        return Some(MISSING_BWRAP_WARNING.to_string());
+        return SystemBwrapCheck::Decided(Some(MISSING_BWRAP_WARNING.to_string()));
     };
 
-    if !system_bwrap_has_user_namespace_access(system_bwrap_path, SYSTEM_BWRAP_PROBE_TIMEOUT) {
-        return Some(USER_NAMESPACE_WARNING.to_string());
-    }
-
-    None
+    SystemBwrapCheck::NeedsProbe(SystemBwrapProbe { system_bwrap_path })
 }
 
 fn system_bwrap_has_user_namespace_access(system_bwrap_path: &Path, timeout: Duration) -> bool {

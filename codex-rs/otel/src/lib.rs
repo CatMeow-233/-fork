@@ -79,6 +79,26 @@ impl From<AuthMode> for TelemetryAuthMode {
     }
 }
 
+/// Operating system details, discovered once per process.
+///
+/// Discovery can launch subprocesses on Linux (`lsb_release`, a Python script on
+/// Debian and Ubuntu, and `getconf`), so every caller shares this single result.
+/// Call it from a background thread early in startup to keep the discovery off
+/// the critical path; later callers then block only for any remaining time.
+pub fn os_info() -> &'static ::os_info::Info {
+    static OS_INFO: std::sync::LazyLock<::os_info::Info> = std::sync::LazyLock::new(::os_info::get);
+    &OS_INFO
+}
+
+/// Start OS discovery on a background thread so later callers find it ready.
+pub fn prewarm_os_info() {
+    let _ = std::thread::Builder::new()
+        .name("codex-os-info".to_string())
+        .spawn(|| {
+            let _ = os_info();
+        });
+}
+
 /// Install externally managed, non-Statsig process-global metrics.
 ///
 /// Call this once during single-threaded startup, before any instruments are

@@ -375,24 +375,27 @@ impl RingBuffer {
         if data.len() >= self.max {
             self.buf.clear();
             let start = data.len() - self.max;
-            self.buf.extend(data[start..].iter().copied());
+            self.buf.extend(&data[start..]);
             return;
         }
 
-        // Evict from the front if we would exceed capacity.
+        // Evict from the front if we would exceed capacity. Once the ring is full
+        // this runs on every log write under the writer mutex, so move ranges.
         let needed = self.len() + data.len();
         if needed > self.max {
-            let to_drop = needed - self.max;
-            for _ in 0..to_drop {
-                let _ = self.buf.pop_front();
-            }
+            let to_drop = (needed - self.max).min(self.len());
+            self.buf.drain(..to_drop);
         }
 
-        self.buf.extend(data.iter().copied());
+        self.buf.extend(data);
     }
 
     fn snapshot_bytes(&self) -> Vec<u8> {
-        self.buf.iter().copied().collect()
+        let (front, back) = self.buf.as_slices();
+        let mut bytes = Vec::with_capacity(front.len() + back.len());
+        bytes.extend_from_slice(front);
+        bytes.extend_from_slice(back);
+        bytes
     }
 }
 

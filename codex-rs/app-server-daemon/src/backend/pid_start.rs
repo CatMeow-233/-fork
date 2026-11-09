@@ -90,12 +90,37 @@ impl PidBackend {
         let codex_bin = fs::canonicalize(&self.codex_bin)
             .await
             .unwrap_or_else(|_| self.codex_bin.clone());
-        let launched_identity =
-            if matches!(self.command_kind, super::PidCommandKind::AppServer { .. }) {
-                executable_identity(&codex_bin).await.ok()
-            } else {
-                None
-            };
+        let managed_app_server =
+            matches!(self.command_kind, super::PidCommandKind::AppServer { .. });
+        // Both only read the pinned binary: hashing a release takes tens of
+        // milliseconds and the flag probe launches it, so overlap them.
+        let (launched_identity, supports_managed_daemon_flag) = tokio::join!(
+            async {
+                if managed_app_server {
+                    executable_identity(&codex_bin).await.ok()
+                } else {
+                    None
+                }
+            },
+            async {
+                // Older or pinned managed binaries may predate this optional startup flag.
+                managed_app_server
+                    && matches!(
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(5),
+                            Command::new(&codex_bin)
+                                .args(["app-server", "--managed-daemon", "--help"])
+                                .stdin(Stdio::null())
+                                .stdout(Stdio::null())
+                                .stderr(Stdio::null())
+                                .kill_on_drop(true)
+                                .status(),
+                        )
+                        .await,
+                        Ok(Ok(status)) if status.success()
+                    )
+            },
+        );
         let mut command = Command::from(codex_utils_process::background_command(&codex_bin));
         let stderr_log = match self.open_stderr_log().await {
             Ok(stderr_log) => stderr_log,
@@ -113,24 +138,7 @@ impl PidBackend {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::from(stderr_log.into_std().await));
-        // Older or pinned managed binaries may predate this optional startup flag.
-        let managed_app_server =
-            matches!(self.command_kind, super::PidCommandKind::AppServer { .. });
-        if managed_app_server
-            && matches!(
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    Command::new(&codex_bin)
-                        .args(["app-server", "--managed-daemon", "--help"])
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .kill_on_drop(true)
-                        .status(),
-                ).await,
-                Ok(Ok(status)) if status.success()
-            )
-        {
+        if supports_managed_daemon_flag {
             command.arg("--managed-daemon");
         } else if managed_app_server {
             let codex_home = self

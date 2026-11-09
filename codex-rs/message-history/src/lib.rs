@@ -31,8 +31,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use std::time::Duration;
-use tokio::fs;
-use tokio::io::AsyncReadExt;
 
 use codex_config::types::History;
 use codex_config::types::HistoryPersistence;
@@ -51,6 +49,8 @@ use std::os::unix::fs::PermissionsExt;
 /// Filename that stores the message history inside `~/.codex`.
 const HISTORY_FILENAME: &str = "history.jsonl";
 const HISTORY_READ_BUFFER_SIZE: usize = 8192;
+/// Large reads keep counting history lines cheap even for big history files.
+const HISTORY_METADATA_READ_BUFFER_SIZE: usize = 256 * 1024;
 
 /// When history exceeds the hard cap, trim it down to this fraction of `max_bytes`.
 const HISTORY_SOFT_CAP_RATIO: f64 = 0.8;
@@ -325,27 +325,36 @@ async fn ensure_owner_only_permissions(_file: &File) -> Result<()> {
 }
 
 async fn history_metadata_for_file(path: &Path) -> (u64, usize) {
-    let log_id = match fs::metadata(path).await {
+    let path = path.to_path_buf();
+    // Count in one blocking task with a large buffer. Async file reads hop to the
+    // blocking pool once per read, so small async reads made every thread start
+    // scale with the size of an unbounded history file.
+    tokio::task::spawn_blocking(move || history_metadata_for_file_blocking(&path))
+        .await
+        .unwrap_or((0, 0))
+}
+
+fn history_metadata_for_file_blocking(path: &Path) -> (u64, usize) {
+    let log_id = match std::fs::metadata(path) {
         Ok(metadata) => log_identity(&metadata).unwrap_or(0),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (0, 0),
         Err(_) => return (0, 0),
     };
 
-    // Open the file.
-    let mut file = match fs::File::open(path).await {
+    let mut file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return (log_id, 0),
     };
 
     // Count newline bytes.
-    let mut buf = [0u8; HISTORY_READ_BUFFER_SIZE];
+    let mut buf = vec![0u8; HISTORY_METADATA_READ_BUFFER_SIZE];
     let mut count = 0usize;
     loop {
-        match file.read(&mut buf).await {
+        match std::io::Read::read(&mut file, &mut buf) {
             Ok(0) => break,
             Ok(n) => {
                 count += memchr_iter(b'\n', &buf[..n]).count();
             }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => return (log_id, 0),
         }
     }

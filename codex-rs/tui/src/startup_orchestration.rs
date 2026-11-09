@@ -292,6 +292,8 @@ pub(super) async fn run_main_inner(
     // Reuse the profile path resolved above; do not reconstruct profile precedence here.
     let mut loader_overrides = launch_loader_overrides;
     loader_overrides.ignore_login_requirements = presentation_target.uses_remote_workspace();
+    // Local settings read the host motion preference.
+    system_motion::wait_initialized().await;
     let presentation = startup_presentation::load(
         &cli,
         &codex_home,
@@ -614,29 +616,34 @@ pub(super) async fn run_main_inner(
         daemon_exclusion = Some(daemon_startup::WSL_DRVFS_EXCLUSION);
     }
     let mut managed_daemon = false;
+    let mut daemon_start_observation = None;
     if auto_start_daemon && daemon_exclusion.is_none() {
-        let output = startup_draft
+        let (output, observation) = startup_draft
             .run_until(async {
                 // Daemon startup needs no terminal input. Keep the composer visible and
                 // responsive while it checks the running server or prepares an installation.
                 // Preserve saved daemon settings until any mismatch is confirmed in recovery.
                 let result =
-                    codex_app_server_daemon::start_with_features_classified(&Default::default())
+                    codex_app_server_daemon::start_for_session_classified(&Default::default())
                         .await;
-                daemon_telemetry::record_start(&config, &result).await;
+                let observation = daemon_telemetry::StartObservation::new(&result);
                 match result.map_err(|err| err.error) {
-                    Ok(output) => Ok(Some(output)),
+                    Ok(output) => Ok((Some(output), observation)),
                     #[cfg(windows)]
                     Err(err) if err.is::<codex_app_server_daemon::DetachedLaunchRestricted>() => {
-                        Ok(None)
+                        Ok((None, observation))
                     }
-                    Err(err) => Err(std::io::Error::other(format!(
-                        "{err:#}\n{}",
-                        daemon_startup::FAILURE_HINT
-                    ))),
+                    Err(err) => {
+                        observation.record_aborted(&config).await;
+                        Err(std::io::Error::other(format!(
+                            "{err:#}\n{}",
+                            daemon_startup::FAILURE_HINT
+                        )))
+                    }
                 }
             })
             .await??;
+        daemon_start_observation = Some(observation);
         if let Some(output) = output {
             managed_daemon = output.backend.is_some();
             app_server_target = AppServerTarget::LocalDaemon {
@@ -650,14 +657,15 @@ pub(super) async fn run_main_inner(
             daemon_exclusion = Some("this Windows launcher");
         }
     }
-    let compatibility_warning = daemon_recovery::check(
+    let (compatibility_warning, prepared_connection) = daemon_recovery::check(
         &mut startup_draft,
         &app_server_target,
         &config,
         &cli_kv_overrides,
         managed_daemon,
     )
-    .await?;
+    .await?
+    .into_parts();
     if compatibility_warning.is_some() {
         app_server_target = AppServerTarget::Embedded;
         daemon_exclusion = Some("daemon feature settings");
@@ -753,6 +761,9 @@ pub(super) async fn run_main_inner(
     } else {
         Vec::new()
     };
+    if let (Some(metrics), Some(observation)) = (&metrics, daemon_start_observation) {
+        observation.record(metrics, &daemon_settings);
+    }
     let mut launch_tags = daemon_settings.to_vec();
     launch_tags.extend(terminal_size_tags);
     launch_tags.extend([
@@ -1015,6 +1026,7 @@ pub(super) async fn run_main_inner(
         managed_worktree.clone(),
         daemon_startup_warning,
         managed_daemon,
+        prepared_connection,
         launch_telemetry,
         startup_draft,
     ))

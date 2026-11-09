@@ -601,8 +601,7 @@ impl MetricsClient {
 
 fn os_resource_attributes() -> Vec<KeyValue> {
     // Provider creation must not repeat OS discovery subprocesses.
-    static OS_INFO: LazyLock<os_info::Info> = LazyLock::new(os_info::get);
-    let os_info = &*OS_INFO;
+    let os_info = crate::os_info();
     let os_type_raw = os_info.os_type().to_string();
     let os_type = sanitize_metric_tag_value(os_type_raw.as_str());
     let os_version_raw = os_info.version().to_string();

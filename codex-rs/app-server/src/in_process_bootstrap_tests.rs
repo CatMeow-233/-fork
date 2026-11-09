@@ -2,6 +2,7 @@
 
 use super::EmbeddedNetworkPolicy;
 use super::configure;
+use super::holds_initial_auth;
 use crate::config_manager::ConfigManager;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -40,6 +41,24 @@ impl ExternalAuth for BootstrapExternalAuth {
     }
 }
 
+fn external_chatgpt_auth(identity: &str) -> anyhow::Result<CodexAuth> {
+    let token = format!(
+        "e30.{}.signature",
+        URL_SAFE_NO_PAD.encode(serde_json::to_vec(&serde_json::json!({
+            "sub": "bootstrap-user",
+            "https://api.openai.com/auth": {
+                "chatgpt_user_id": "bootstrap-user",
+                "chatgpt_account_id": identity,
+            },
+        }))?),
+    );
+    Ok(CodexAuth::from_external_chatgpt_tokens(
+        &token,
+        identity,
+        Some("enterprise"),
+    )?)
+}
+
 #[tokio::test]
 async fn bootstrap_discovery_survives_identity_installation_but_account_access_is_revoked()
 -> anyhow::Result<()> {
@@ -73,19 +92,10 @@ async fn bootstrap_discovery_survives_identity_installation_but_account_access_i
     bootstrap.network_policy().acquire(&bundle_url)?;
     let mut previous_access: Option<(HttpClientFactory, NetworkPermit)> = None;
     for identity in ["bootstrap-account-one", "bootstrap-account-two"] {
-        let token = format!(
-            "e30.{}.signature",
-            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&serde_json::json!({
-                "sub": "bootstrap-user",
-                "https://api.openai.com/auth": {
-                    "chatgpt_user_id": "bootstrap-user",
-                    "chatgpt_account_id": identity,
-                },
-            }))?),
-        );
-        let auth = CodexAuth::from_external_chatgpt_tokens(&token, identity, Some("enterprise"))?;
         manager
-            .set_external_auth(Arc::new(BootstrapExternalAuth(auth)))
+            .set_external_auth(Arc::new(BootstrapExternalAuth(external_chatgpt_auth(
+                identity,
+            )?)))
             .await?;
 
         if let Some((client, permit)) = previous_access.take() {
@@ -230,5 +240,59 @@ async fn startup_reloads_the_callers_selected_project() -> anyhow::Result<()> {
             .to_string()
             .contains("Error parsing project config file")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn bootstrap_auth_is_reusable_only_until_it_changes() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let config = ConfigBuilder::default()
+        .codex_home(home.path().to_path_buf())
+        .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await?;
+    let manager = AuthManager::new(
+        home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::Ephemeral,
+        /*forced_chatgpt_workspace_id*/ None,
+        Some(config.chatgpt_base_url.clone()),
+        AuthKeyringBackendKind::default(),
+        config.auth_route_config(),
+    )
+    .await;
+    let changes = manager.auth_change_state_receiver();
+    assert!(holds_initial_auth(&manager, &changes));
+
+    manager
+        .set_external_auth(Arc::new(BootstrapExternalAuth(external_chatgpt_auth(
+            "bootstrap-account",
+        )?)))
+        .await?;
+    assert!(!holds_initial_auth(&manager, &changes));
+    // A credential without a recorded refresh outcome does not block reuse by itself.
+    assert!(holds_initial_auth(
+        &manager,
+        &manager.auth_change_state_receiver()
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn managed_config_loader_inputs_match_only_identical_loader_arguments() -> anyhow::Result<()>
+{
+    let home = tempfile::tempdir()?;
+    let manager = ConfigManager::without_managed_config_for_tests(home.path().to_path_buf());
+    let loaded = manager.load_latest_config(/*fallback_cwd*/ None).await?;
+    let reloaded = manager.load_latest_config(/*fallback_cwd*/ None).await?;
+    assert!(manager.managed_config_loader_inputs_match(&loaded, &reloaded));
+
+    let mut other_backend = reloaded.clone();
+    other_backend.chatgpt_base_url = "https://other.example/backend-api/".to_string();
+    assert!(!manager.managed_config_loader_inputs_match(&loaded, &other_backend));
+
+    let mut other_proxy = reloaded;
+    other_proxy.respect_system_proxy = !other_proxy.respect_system_proxy;
+    assert!(!manager.managed_config_loader_inputs_match(&loaded, &other_proxy));
     Ok(())
 }

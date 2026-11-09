@@ -119,6 +119,8 @@ pub(crate) struct OnboardingResult {
     pub directory_trust_persisted: bool,
     pub selected_gateway: Option<String>,
     pub should_exit: bool,
+    /// Whether an interactive screen ran, so reads made before it may be stale.
+    pub screen_shown: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -827,6 +829,7 @@ async fn run_onboarding_screen_inner(
             }
         }),
         should_exit: onboarding_screen.should_exit(),
+        screen_shown: true,
     })
 }
 

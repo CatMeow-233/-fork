@@ -7,6 +7,7 @@
 //! configuration; removed features are inert, and unreported features are assumed disabled.
 
 use super::*;
+use crate::app_server_connection::PreparedConnection;
 use codex_app_server_client::TypedRequestError;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigRequirementsReadResponse;
@@ -57,6 +58,27 @@ pub(super) const ELEVATED_LAUNCH_WARNING: &str = "Running as administrator: shar
 pub(super) struct CompatibilityError {
     pub reason: String,
     pub restart_features: Option<BTreeMap<String, bool>>,
+}
+
+/// A compatibility check outcome that lets startup continue.
+#[derive(Debug)]
+pub(super) enum Compatibility {
+    /// The target is not a local daemon, so there was nothing to check.
+    Unchecked,
+    /// The daemon can serve this session over the connection the check opened.
+    Compatible(PreparedConnection),
+    /// Run embedded instead, showing this warning.
+    Fallback(String),
+}
+
+impl Compatibility {
+    pub(super) fn into_parts(self) -> (Option<String>, Option<PreparedConnection>) {
+        match self {
+            Self::Unchecked => (None, None),
+            Self::Compatible(connection) => (None, Some(connection)),
+            Self::Fallback(warning) => (Some(warning), None),
+        }
+    }
 }
 
 pub(super) fn exclusion(
@@ -125,17 +147,18 @@ pub(super) fn config_exclusion(
 }
 
 /// Best-effort configured readback, not a guarantee about startup-captured service state.
-pub(super) async fn compatibility_warning(
+/// A passing check returns its initialized connection so the session need not dial again.
+pub(super) async fn check_compatibility(
     target: &AppServerTarget,
     config: &Config,
     cli_kv_overrides: &[(String, toml::Value)],
-) -> Result<Option<String>, CompatibilityError> {
+) -> Result<Compatibility, CompatibilityError> {
     let AppServerTarget::LocalDaemon {
         allow_embedded_fallback,
         ..
     } = target
     else {
-        return Ok(None);
+        return Ok(Compatibility::Unchecked);
     };
     // File settings and defaults belong to the daemon until it restarts.
     // Only explicit invocation flags can request a shared-service restart.
@@ -160,8 +183,7 @@ pub(super) async fn compatibility_warning(
             .await
             .map_err(|_| "could not connect to check daemon feature settings".to_string())?;
         if requested.is_empty() {
-            let _ = client.shutdown().await;
-            return Ok(());
+            return Ok(client);
         }
         // Both legacy managed config and current requirements override CLI flags.
         let layers = crate::config_update::read_effective_config_if_supported(
@@ -205,8 +227,7 @@ pub(super) async fn compatibility_warning(
             Err(_) => return Err("could not check daemon configuration requirements".to_string()),
         }
         if requested.is_empty() {
-            let _ = client.shutdown().await;
-            return Ok(());
+            return Ok(client);
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
         crate::experimental_features::fetch(
@@ -215,9 +236,16 @@ pub(super) async fn compatibility_warning(
             "tui-daemon-features",
             tx,
         );
-        let result = rx.await;
-        let _ = client.shutdown().await;
-        let features = result.map_err(|_| "daemon feature check was interrupted".to_string())??;
+        let features = rx
+            .await
+            .unwrap_or_else(|_| Err("daemon feature check was interrupted".to_string()));
+        let features = match features {
+            Ok(features) => features,
+            Err(reason) => {
+                let _ = client.shutdown().await;
+                return Err(reason);
+            }
+        };
         requested.retain(|name, enabled| {
             match features.iter().find(|feature| feature.name == *name) {
                 Some(feature) => {
@@ -231,16 +259,22 @@ pub(super) async fn compatibility_warning(
             let state = if *enabled { "enabled" } else { "disabled" };
             let reason = format!("This session requires {name} to be {state}");
             restart_features = Some(requested);
+            let _ = client.shutdown().await;
             return Err(reason);
         }
-        Ok::<(), String>(())
+        Ok::<_, String>(client)
     }
     .await;
     match check {
-        Ok(()) => Ok(None),
-        Err(reason) if *allow_embedded_fallback && restart_features.is_none() => Ok(Some(format!(
-            "Running without the shared background server: {reason}."
+        Ok(client) => Ok(Compatibility::Compatible(PreparedConnection::new(
+            target.clone(),
+            client,
         ))),
+        Err(reason) if *allow_embedded_fallback && restart_features.is_none() => {
+            Ok(Compatibility::Fallback(format!(
+                "Running without the shared background server: {reason}."
+            )))
+        }
         Err(reason) => Err(CompatibilityError {
             reason,
             restart_features,

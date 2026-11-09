@@ -26,12 +26,16 @@ use codex_state::DB_METRIC_BACKFILL_DURATION_MS;
 use codex_state::ExtractionOutcome;
 use codex_state::ThreadMetadataBuilder;
 use codex_state::apply_rollout_item;
+use futures::StreamExt;
+use futures::stream;
 use std::path::Path;
 use std::path::PathBuf;
 use tracing::info;
 use tracing::warn;
 
 const BACKFILL_BATCH_SIZE: usize = 200;
+/// Rollouts parsed at once; bounds the number of fully loaded rollouts held in memory.
+const BACKFILL_EXTRACT_CONCURRENCY: usize = 8;
 #[cfg(not(test))]
 const BACKFILL_LEASE_SECONDS: i64 = 900;
 #[cfg(test)]
@@ -303,9 +307,18 @@ pub(crate) async fn backfill_sessions_with_lease(
     };
     let mut last_watermark = backfill_state.last_watermark.clone();
     for batch in rollout_paths.chunks(BACKFILL_BATCH_SIZE) {
-        for rollout in batch {
+        // Parsing only reads the rollout file, so overlap it across rollouts; `buffered` keeps
+        // results in watermark order, so the SQLite writes below stay strictly sequential.
+        let mut extractions = stream::iter(batch.iter().cloned())
+            .map(|rollout| async move {
+                let extraction =
+                    extract_metadata_from_rollout(&rollout.path, default_provider).await;
+                (rollout, extraction)
+            })
+            .buffered(BACKFILL_EXTRACT_CONCURRENCY);
+        while let Some((rollout, extraction)) = extractions.next().await {
             stats.scanned = stats.scanned.saturating_add(1);
-            match extract_metadata_from_rollout(&rollout.path, default_provider).await {
+            match extraction {
                 Ok(outcome) => {
                     if outcome.parse_errors > 0
                         && let Some(ref metric_client) = metric_client

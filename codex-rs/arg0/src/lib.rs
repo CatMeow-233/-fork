@@ -21,6 +21,8 @@ use tempfile::TempDir;
 const APPLY_PATCH_ARG0: &str = "apply_patch";
 const MISSPELLED_APPLY_PATCH_ARG0: &str = "applypatch";
 const LOCK_FILENAME: &str = ".lock";
+/// Prefix of the `TempDir`s the sweep renames stale alias dirs into before deleting them.
+const RETIRED_DIR_PREFIX: &str = ".tmp";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Arg0DispatchPaths {
@@ -42,6 +44,7 @@ pub struct Arg0PathEntryGuard {
     _lock_file: File,
     _temp_dir: TempDir,
     paths: Arg0DispatchPaths,
+    stale_dir_cleanup: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Arg0PathEntryGuard {
@@ -50,15 +53,71 @@ impl Arg0PathEntryGuard {
             _temp_dir: temp_dir,
             _lock_file: lock_file,
             paths,
+            stale_dir_cleanup: None,
         }
     }
 
     pub fn paths(&self) -> &Arg0DispatchPaths {
         &self.paths
     }
+
+    /// Per-OS root holding every session's alias dir, including this one.
+    fn alias_root(&self) -> Option<PathBuf> {
+        self._temp_dir.path().parent().map(Path::to_path_buf)
+    }
+
+    fn cleanup_stale_dirs(&self) {
+        // Best-effort cleanup of stale per-session dirs. Ignore failures so startup proceeds.
+        if let Some(alias_root) = self.alias_root()
+            && let Err(err) = janitor_cleanup_excluding(&alias_root, Some(self._temp_dir.path()))
+        {
+            eprintln!("WARNING: failed to clean up stale arg0 temp dirs: {err}");
+        }
+    }
+
+    /// Sweeps stale alias dirs off the startup path.
+    ///
+    /// The sweep skips our own dir by path. Call only after the last
+    /// single-threaded `set_var()`, since this adds a thread.
+    fn spawn_stale_dir_cleanup(&mut self) {
+        let Some(alias_root) = self.alias_root() else {
+            return;
+        };
+        let own_dir = self._temp_dir.path().to_path_buf();
+        // A failed spawn only defers the cleanup to the next launch.
+        self.stale_dir_cleanup = std::thread::Builder::new()
+            .name("codex-arg0-janitor".to_string())
+            .spawn(move || {
+                // Stay quiet: the TUI may already own the terminal, and stale
+                // dirs are retried on the next launch.
+                let _ = janitor_cleanup_excluding(&alias_root, Some(own_dir.as_path()));
+            })
+            .ok();
+    }
+}
+
+impl Drop for Arg0PathEntryGuard {
+    fn drop(&mut self) {
+        // Finish the sweep before our own dir is removed: a sweep that opens our
+        // `.lock` mid-removal would leave an NFS `.nfs*` entry behind, and one
+        // cut short by exit can strand a half-deleted dir.
+        if let Some(stale_dir_cleanup) = self.stale_dir_cleanup.take() {
+            let _ = stale_dir_cleanup.join();
+        }
+    }
 }
 
 pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
+    let path_entry_guard = arg0_dispatch_and_set_path();
+    // Direct callers may still rely on a single-threaded process (for example
+    // to call set_var() afterwards), so sweep inline here.
+    if let Some(path_entry_guard) = path_entry_guard.as_ref() {
+        path_entry_guard.cleanup_stale_dirs();
+    }
+    path_entry_guard
+}
+
+fn arg0_dispatch_and_set_path() -> Option<Arg0PathEntryGuard> {
     #[cfg(target_os = "linux")]
     codex_utils_pty::init_spawn_helper(std::env::args_os());
     // Determine if we were invoked via the special alias.
@@ -199,8 +258,13 @@ where
     // Retain the TempDir so it exists for the lifetime of the invocation of
     // this executable. Admittedly, we could invoke `keep()` on it, but it
     // would be nice to avoid leaving temporary directories behind, if possible.
-    let path_entry_guard = arg0_dispatch();
+    let mut path_entry_guard = arg0_dispatch_and_set_path();
     let current_exe = std::env::current_exe().ok();
+    if let Some(path_entry_guard) = path_entry_guard.as_mut() {
+        // PATH is set and our own dir is locked, and spawning codex-main below
+        // makes the process multi-threaded anyway, so nothing has to wait.
+        path_entry_guard.spawn_stale_dir_cleanup();
+    }
 
     // Regular invocation. Run the async entry point on a thread with the same
     // stack budget as Tokio workers; `Runtime::block_on` otherwise runs the
@@ -358,11 +422,7 @@ fn prepare_aliases_in_home(
         std::fs::set_permissions(&temp_root, std::fs::Permissions::from_mode(0o700))?;
     }
 
-    // Best-effort cleanup of stale per-session dirs. Ignore failures so startup proceeds.
-    if let Err(err) = janitor_cleanup(&temp_root) {
-        eprintln!("WARNING: failed to clean up stale arg0 temp dirs: {err}");
-    }
-
+    // Stale per-session dirs are swept by the caller once our own dir is locked.
     let temp_dir = tempfile::Builder::new()
         .prefix("codex-arg0")
         .tempdir_in(&temp_root)?;
@@ -377,14 +437,13 @@ fn prepare_aliases_in_home(
         .open(&lock_path)?;
     lock_file.try_lock()?;
 
+    let exe = std::env::current_exe()?;
     for filename in &[
         APPLY_PATCH_ARG0,
         MISSPELLED_APPLY_PATCH_ARG0,
         #[cfg(target_os = "linux")]
         CODEX_LINUX_SANDBOX_ARG0,
     ] {
-        let exe = std::env::current_exe()?;
-
         #[cfg(unix)]
         {
             let link = path.join(filename);
@@ -410,7 +469,7 @@ fn prepare_aliases_in_home(
 
     let paths = Arg0DispatchPaths {
         main_execve_wrapper_exe: None,
-        codex_self_exe: std::env::current_exe().ok(),
+        codex_self_exe: Some(exe),
         codex_linux_sandbox_exe: {
             #[cfg(target_os = "linux")]
             {
@@ -468,7 +527,18 @@ fn path_env_with_entry(path_entry: &Path, existing_path: Option<OsString>) -> Os
     path_env_var
 }
 
+#[cfg(test)]
 fn janitor_cleanup(temp_root: &Path) -> std::io::Result<()> {
+    janitor_cleanup_excluding(temp_root, /*own_dir*/ None)
+}
+
+/// Sweeps unlocked alias dirs under `temp_root`, never touching `own_dir`.
+///
+/// The sweep now runs after this process locked its own dir. Where `flock` is
+/// emulated with per-process POSIX locks (Linux NFS clients), a second open in
+/// this process would acquire our own lock, and closing it would release ours,
+/// so our live dir must be skipped by path rather than by its lock.
+fn janitor_cleanup_excluding(temp_root: &Path, own_dir: Option<&Path>) -> std::io::Result<()> {
     let entries = match std::fs::read_dir(temp_root) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -477,12 +547,13 @@ fn janitor_cleanup(temp_root: &Path) -> std::io::Result<()> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() {
+        if own_dir == Some(path.as_path()) || !path.is_dir() {
             continue;
         }
 
         // Skip the directory if locking fails or the lock is currently held.
         let Some(_lock_file) = try_lock_dir(&path)? else {
+            remove_interrupted_retirement(&path);
             continue;
         };
 
@@ -490,7 +561,9 @@ fn janitor_cleanup(temp_root: &Path) -> std::io::Result<()> {
         let removal = {
             // Rename while locked so initializers cannot publish at the old path,
             // then close the lock before deletion to avoid NFS silly rename.
-            let retired_dir = TempDir::new_in(temp_root)?;
+            let retired_dir = tempfile::Builder::new()
+                .prefix(RETIRED_DIR_PREFIX)
+                .tempdir_in(temp_root)?;
             match std::fs::rename(&path, retired_dir.path()) {
                 Ok(()) => {
                     drop(_lock_file);
@@ -511,6 +584,27 @@ fn janitor_cleanup(temp_root: &Path) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+/// Finish deleting a dir a previous sweep retired but did not fully remove.
+///
+/// The sweep runs on a background thread, so an early `process::exit` (for
+/// example `--version` or `--help`) can stop it mid-delete. Retired dirs carry
+/// the `TempDir` prefix and may already have lost their `.lock`, which would
+/// otherwise keep them out of every later sweep.
+fn remove_interrupted_retirement(dir: &Path) {
+    let is_retired = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with(RETIRED_DIR_PREFIX));
+    if is_retired
+        && matches!(
+            dir.join(LOCK_FILENAME).symlink_metadata(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound
+        )
+    {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 fn try_lock_dir(dir: &Path) -> std::io::Result<Option<File>> {
@@ -548,6 +642,10 @@ mod tests {
     use std::os::windows::process::CommandExt;
     use std::path::Path;
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     struct PackagePathTestFixture {
@@ -780,8 +878,25 @@ mod tests {
             fs::write(stale.join("helper"), b"keep foreign helpers")?;
         }
 
-        let (guard, _) = super::prepare_aliases_in_home(home.path(), /*existing_path*/ None)?;
+        let (mut guard, _) =
+            super::prepare_aliases_in_home(home.path(), /*existing_path*/ None)?;
+        let helper = guard._temp_dir.path().join(if cfg!(windows) {
+            "apply_patch.bat"
+        } else {
+            "apply_patch"
+        });
+        // Alias setup leaves the sweep to the background thread.
+        assert!(own_root.join("codex-arg0-existing").exists());
+        guard.spawn_stale_dir_cleanup();
+        guard
+            .stale_dir_cleanup
+            .take()
+            .expect("stale dir cleanup should be spawned")
+            .join()
+            .expect("stale dir cleanup should not panic");
         assert!(!own_root.join("codex-arg0-existing").exists());
+        // The sweep runs after our own dir exists, so it must skip that dir.
+        assert!(helper.is_file());
         assert_eq!(
             [&foreign_root, &legacy_root]
                 .map(|root| fs::read(root.join("codex-arg0-existing/helper")))
@@ -793,16 +908,50 @@ mod tests {
         // Older versions clean only this root. Run that cleanup while a new
         // helper is live, then confirm the advertised helper remains usable.
         janitor_cleanup(&legacy_root)?;
-        let helper = guard._temp_dir.path().join(if cfg!(windows) {
-            "apply_patch.bat"
-        } else {
-            "apply_patch"
-        });
         assert!(helper.is_file());
         assert_eq!(
             fs::read(foreign_root.join("codex-arg0-existing/helper"))?,
             b"keep foreign helpers",
         );
+        Ok(())
+    }
+
+    #[test]
+    fn inline_stale_dir_cleanup_keeps_live_aliases() -> std::io::Result<()> {
+        let home = tempfile::tempdir()?;
+        let own_root = home
+            .path()
+            .join("tmp")
+            .join(format!("arg0-{}", std::env::consts::OS));
+        let stale = own_root.join("codex-arg0-stale");
+        fs::create_dir_all(&stale)?;
+        create_lock(&stale)?;
+
+        let (guard, _) = super::prepare_aliases_in_home(home.path(), /*existing_path*/ None)?;
+        guard.cleanup_stale_dirs();
+
+        assert!(!stale.exists());
+        assert!(guard._temp_dir.path().join(LOCK_FILENAME).is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn dropping_guard_waits_for_stale_dir_cleanup() -> std::io::Result<()> {
+        let home = tempfile::tempdir()?;
+        let (mut guard, _) =
+            super::prepare_aliases_in_home(home.path(), /*existing_path*/ None)?;
+        let alias_dir = guard._temp_dir.path().to_path_buf();
+        let finished = Arc::new(AtomicBool::new(false));
+        let cleanup_finished = Arc::clone(&finished);
+        guard.stale_dir_cleanup = Some(std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            cleanup_finished.store(true, Ordering::SeqCst);
+        }));
+
+        drop(guard);
+
+        assert!(finished.load(Ordering::SeqCst));
+        assert!(!alias_dir.exists());
         Ok(())
     }
 
@@ -815,6 +964,44 @@ mod tests {
         janitor_cleanup(root.path())?;
 
         assert!(dir.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn janitor_never_sweeps_its_own_dir_even_when_its_lock_is_free() -> std::io::Result<()> {
+        // Per-process lock emulation (NFS) lets this process take its own lock again,
+        // so exclusion must not depend on the lock being held.
+        let root = tempfile::tempdir()?;
+        let own = root.path().join("own");
+        let stale = root.path().join("stale");
+        for dir in [&own, &stale] {
+            fs::create_dir(dir)?;
+            create_lock(dir)?;
+        }
+
+        super::janitor_cleanup_excluding(root.path(), Some(own.as_path()))?;
+
+        assert!(own.join(LOCK_FILENAME).is_file());
+        assert!(!stale.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn janitor_finishes_retirements_cut_short_by_exit() -> std::io::Result<()> {
+        // A sweep stopped mid-delete can leave a retired dir without its `.lock`.
+        let root = tempfile::tempdir()?;
+        let retired = root.path().join(".tmpInterrupted");
+        let unlocked_alias = root.path().join("codex-arg0-initializing");
+        for dir in [&retired, &unlocked_alias] {
+            fs::create_dir(dir)?;
+            fs::write(dir.join("apply_patch"), b"partial")?;
+        }
+
+        super::janitor_cleanup_excluding(root.path(), /*own_dir*/ None)?;
+
+        assert!(!retired.exists());
+        // An alias dir that has not published its lock yet may still be initializing.
+        assert!(unlocked_alias.join("apply_patch").is_file());
         Ok(())
     }
 

@@ -6,6 +6,8 @@ pub use auth::WorkspaceRouting;
 pub use auth::WorkspaceRoutingRequest;
 pub use auth::WorkspaceRoutingResolver;
 pub use auth::WorkspaceRoutingSession;
+/// Process-wide OS details shared with telemetry, so discovery runs only once.
+pub use codex_otel::os_info as shared_os_info;
 
 mod callback_params;
 mod credential_export;

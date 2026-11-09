@@ -617,11 +617,14 @@ impl Session {
                 .list_models(refresh_strategy, config.http_client_factory())
                 .await;
         }
+        // The refresh above already loaded (or failed to load) the catalog. Reading it
+        // from memory avoids a second cache parse and, after a failed fetch, a second
+        // network attempt with its own timeout before the session can start.
         let model = models_manager
             .get_default_model(
                 &config.model,
                 allow_provider_model_fallback,
-                refresh_strategy,
+                RefreshStrategy::InMemory,
                 config.http_client_factory(),
             )
             .await;

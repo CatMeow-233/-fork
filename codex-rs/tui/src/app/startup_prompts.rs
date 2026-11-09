@@ -100,17 +100,37 @@ pub(super) fn project_config_warning(config: &Config) -> Option<String> {
     Some(message)
 }
 
+/// Report system bubblewrap problems, launching the probe off the startup task.
+///
+/// Most outcomes are known without running `bwrap`, so they are reported in
+/// order with the other startup warnings. Only the user-namespace probe
+/// launches a subprocess and waits for it; that would otherwise hold the
+/// provisional composer and the thread start on every Linux launch.
 pub(super) fn emit_system_bwrap_warning(app_event_tx: &AppEventSender, config: &Config) {
-    let Some(message) = codex_sandboxing::system_bwrap_warning(
+    let send = |app_event_tx: &AppEventSender, message: String| {
+        app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+            history_cell::StartupWarningsCell::new(vec![message]),
+        )));
+    };
+    match codex_sandboxing::system_bwrap_check(
         &config.permissions.effective_permission_profile(),
         &config.cwd,
-    ) else {
-        return;
-    };
-
-    app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-        history_cell::StartupWarningsCell::new(vec![message]),
-    )));
+    ) {
+        codex_sandboxing::SystemBwrapCheck::Decided(Some(message)) => send(app_event_tx, message),
+        codex_sandboxing::SystemBwrapCheck::Decided(None) => {}
+        codex_sandboxing::SystemBwrapCheck::NeedsProbe(probe) => {
+            let app_event_tx = app_event_tx.clone();
+            let probe = move || {
+                if let Some(message) = probe.run() {
+                    send(&app_event_tx, message);
+                }
+            };
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => drop(handle.spawn_blocking(probe)),
+                Err(_) => probe(),
+            }
+        }
+    }
 }
 
 pub(super) fn model_upgrade_for_migration(

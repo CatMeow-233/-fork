@@ -65,7 +65,9 @@ fn times_out_and_reaps_running_probe() {
     );
     assert_eq!(result, VscodeDetection::Unknown);
     assert!(keyboard_enhancement_disabled_for(
-        /*disable_env*/ None, /*is_wsl*/ true, result
+        /*disable_env*/ None,
+        || true,
+        || result
     ));
     assert!(started.elapsed() < Duration::from_secs(/*secs*/ 2));
     assert_child_reaped(
@@ -95,7 +97,9 @@ fn times_out_during_launch_and_reaps_child_when_launch_finishes() {
     release.send(()).unwrap();
     assert_eq!(result, VscodeDetection::Unknown);
     assert!(keyboard_enhancement_disabled_for(
-        /*disable_env*/ None, /*is_wsl*/ true, result
+        /*disable_env*/ None,
+        || true,
+        || result
     ));
     assert!(started.elapsed() < Duration::from_secs(/*secs*/ 2));
     assert_child_reaped(

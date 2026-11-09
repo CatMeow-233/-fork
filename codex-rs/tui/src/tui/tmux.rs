@@ -7,6 +7,8 @@ use std::io::Read;
 use std::io::Seek;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::Mutex;
+use std::sync::PoisonError;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
@@ -16,9 +18,14 @@ use std::time::Instant;
 use itertools::Itertools;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 1);
-const PROBE_POLL_INTERVAL: Duration = Duration::from_millis(/*millis*/ 10);
+// Startup waits on this probe and tmux usually answers within a few milliseconds.
+const PROBE_POLL_INTERVAL: Duration = Duration::from_millis(/*millis*/ 1);
 const MAX_PROBE_OUTPUT_BYTES: u64 = 4096;
+// Startup enters the alternate screen right after terminal init; later entries probe again so
+// option changes made meanwhile still apply.
+const STARTUP_OPTIONS_REUSE_WINDOW: Duration = Duration::from_secs(/*secs*/ 1);
 static PROBE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static STARTUP_OPTIONS: Mutex<Option<(Instant, Options)>> = Mutex::new(None);
 
 /// Capture policy for the current terminal setup, shared by fullscreen and overlays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -75,6 +82,34 @@ pub(super) fn options() -> Options {
     receiver
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .unwrap_or_default()
+}
+
+/// Keep terminal init's probe so the startup alternate-screen entry does not run tmux again.
+pub(super) fn retain_startup_options(options: Options) {
+    *STARTUP_OPTIONS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some((Instant::now(), options));
+}
+
+/// Return terminal init's probe once while it is fresh; otherwise probe tmux again.
+pub(super) fn startup_or_current_options() -> Options {
+    take_retained_or_probe(&STARTUP_OPTIONS, Instant::now(), options)
+}
+
+fn take_retained_or_probe(
+    slot: &Mutex<Option<(Instant, Options)>>,
+    now: Instant,
+    probe: impl FnOnce() -> Options,
+) -> Options {
+    let retained = slot.lock().unwrap_or_else(PoisonError::into_inner).take();
+    match retained {
+        Some((probed_at, options))
+            if now.saturating_duration_since(probed_at) <= STARTUP_OPTIONS_REUSE_WINDOW =>
+        {
+            options
+        }
+        _ => probe(),
+    }
 }
 
 fn command_stdout_before_deadline(command: &mut Command, deadline: Instant) -> Option<Vec<u8>> {

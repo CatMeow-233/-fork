@@ -520,6 +520,8 @@ pub async fn run_main_with_transport_options(
     auth: WebsocketAuthSettings,
     runtime_options: AppServerRuntimeOptions,
 ) -> IoResult<AppServerExit> {
+    // Telemetry and HTTP clients need OS details; discover them while config loads.
+    codex_otel::prewarm_os_info();
     let cloud_skill_provider = match runtime_options.cloud_skills_snapshot {
         Some(path) => {
             let provider = tokio::task::spawn_blocking(move || {

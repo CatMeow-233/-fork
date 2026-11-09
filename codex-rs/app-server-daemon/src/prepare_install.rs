@@ -232,16 +232,29 @@ async fn prepare_from_package(
     let stage = tempfile::Builder::new()
         .prefix(".staging.")
         .tempdir_in(&releases)?;
-    let mut staged_digests = BTreeMap::new();
-    let digest = package_tree(source, Some(stage.path()), &mut staged_digests)?;
+    // Copying and hashing a full package can take seconds on slow disks; run it off the
+    // async task so interactive callers keep drawing. The closure owns the staging
+    // directory so an abandoned caller cannot delete it mid-copy.
+    let (stage, digest, mut staged_digests, source_unchanged) = tokio::task::spawn_blocking({
+        let source = source.to_path_buf();
+        move || {
+            let mut staged_digests = BTreeMap::new();
+            let digest = package_tree(&source, Some(stage.path()), &mut staged_digests)?;
+            let source_unchanged =
+                package_tree(&source, /*destination*/ None, &mut BTreeMap::new())? == digest
+                    && std::fs::read(stage.path().join("codex-package.json"))? == manifest_bytes;
+            Ok::<_, anyhow::Error>((stage, digest, staged_digests, source_unchanged))
+        }
+    })
+    .await
+    .context("daemon package staging task failed")??;
     let staged_exe = if cfg!(target_os = "macos") && stage.path().join("CodexCLI.app").is_dir() {
         Path::new("CodexCLI.app/Contents/MacOS/codex")
     } else {
         Path::new(source_entrypoint)
     };
     anyhow::ensure!(
-        package_tree(source, /*destination*/ None, &mut BTreeMap::new())? == digest
-            && std::fs::read(stage.path().join("codex-package.json"))? == manifest_bytes
+        source_unchanged
             && staged_digests.get(staged_exe).map(blake3::Hash::as_bytes)
                 == Some(&running_identity.digest),
         "the CLI package changed while preparing the daemon or differs from the running executable"
@@ -303,9 +316,21 @@ async fn prepare_from_package(
     };
     let release = releases.join(&name);
     if release.try_exists()? {
+        // Rehashing the existing release reads the whole package; keep it off the caller's task.
+        let matches = tokio::task::spawn_blocking({
+            let release = release.clone();
+            move || {
+                Ok::<_, anyhow::Error>(
+                    !release.symlink_metadata()?.file_type().is_symlink()
+                        && package_tree(&release, /*destination*/ None, &mut BTreeMap::new())?
+                            == digest,
+                )
+            }
+        })
+        .await
+        .context("daemon release verification task failed")??;
         anyhow::ensure!(
-            !release.symlink_metadata()?.file_type().is_symlink()
-                && package_tree(&release, /*destination*/ None, &mut BTreeMap::new())? == digest,
+            matches,
             "an existing daemon release has different contents; refusing to overwrite it"
         );
     } else {

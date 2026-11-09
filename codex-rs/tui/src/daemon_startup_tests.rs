@@ -136,10 +136,10 @@ async fn daemon_feature_compatibility_respects_required_and_optional_attachment(
             if cli_overrides.is_empty() {
                 drop(listener);
                 let result =
-                    daemon_startup::compatibility_warning(&target, &config, &cli_overrides).await;
+                    daemon_startup::check_compatibility(&target, &config, &cli_overrides).await;
                 assert!(matches!(
                     (allow_embedded_fallback, result),
-                    (true, Ok(Some(_))) | (false, Err(_))
+                    (true, Ok(daemon_startup::Compatibility::Fallback(_))) | (false, Err(_))
                 ));
                 continue;
             }
@@ -186,11 +186,25 @@ async fn daemon_feature_compatibility_respects_required_and_optional_attachment(
                         .unwrap();
                 }
             });
-            let result =
-                daemon_startup::compatibility_warning(&target, &config, &cli_overrides).await;
+            let result = daemon_startup::check_compatibility(&target, &config, &cli_overrides)
+                .await
+                .map(daemon_startup::Compatibility::into_parts);
+            // A passing check keeps its connection for the session; close it so the server exits.
+            let result = match result {
+                Ok((warning, Some(connection))) => {
+                    let client = connection
+                        .take_for(&target)
+                        .await
+                        .expect("connection was opened for this target");
+                    client.shutdown().await?;
+                    Ok((warning, true))
+                }
+                Ok((warning, None)) => Ok((warning, false)),
+                Err(error) => Err(error),
+            };
             server.await?;
             if matches!(scenario, "matching" | "managed" | "legacy managed") {
-                assert_eq!(result?, None);
+                assert_eq!(result?, (None, true));
                 continue;
             }
             let reason = match scenario {
@@ -204,10 +218,14 @@ async fn daemon_feature_compatibility_respects_required_and_optional_attachment(
             };
             let restartable = scenario != "unsupported RPC";
             if allow_embedded_fallback && !restartable {
-                let warning = result?.expect("optional attachment should fall back");
                 assert_eq!(
-                    warning,
-                    format!("Running without the shared background server: {reason}.")
+                    result?,
+                    (
+                        Some(format!(
+                            "Running without the shared background server: {reason}."
+                        )),
+                        false
+                    )
                 );
             } else {
                 let error = result.unwrap_err();
@@ -234,6 +252,102 @@ async fn daemon_feature_compatibility_respects_required_and_optional_attachment(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn passing_daemon_check_hands_its_connection_only_to_a_fresh_matching_connect()
+-> color_eyre::Result<()> {
+    use codex_app_server_protocol::ClientRequest;
+    use codex_app_server_protocol::ConfigRequirementsReadResponse;
+    use codex_app_server_protocol::JSONRPCMessage;
+    use codex_app_server_protocol::RequestId;
+    use futures::SinkExt;
+    use futures::StreamExt;
+    use serde_json::json;
+    use std::time::Duration;
+    use std::time::Instant;
+    use tokio_tungstenite::tungstenite::Message;
+
+    for scenario in ["same target", "embedded fallback", "stale"] {
+        let home = TempDir::new()?;
+        let config = ConfigBuilder::default()
+            .codex_home(home.path().to_path_buf())
+            .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+            .build()
+            .await?;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let target = AppServerTarget::LocalDaemon {
+            endpoint: RemoteAppServerEndpoint::WebSocket {
+                websocket_url: format!("ws://{}", listener.local_addr()?),
+                auth_token: None,
+            },
+            allow_embedded_fallback: false,
+        };
+        // Serve a single connection and record its requests until the client closes it.
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let mut methods = Vec::new();
+            while let Some(Ok(Message::Text(text))) = socket.next().await {
+                let JSONRPCMessage::Request(request) = serde_json::from_str(&text).unwrap() else {
+                    continue;
+                };
+                let result = match request.method.as_str() {
+                    "initialize" => json!({"userAgent": "daemon-test"}),
+                    "configRequirements/read" => json!({"requirements": null}),
+                    _ => panic!("unexpected request: {}", request.method),
+                };
+                methods.push(request.method);
+                socket
+                    .send(Message::Text(
+                        json!({"id": request.id, "result": result})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+            methods
+        });
+
+        let (warning, connection) =
+            daemon_startup::check_compatibility(&target, &config, /*cli_kv_overrides*/ &[])
+                .await?
+                .into_parts();
+        assert_eq!(warning, None);
+        let connection = connection.expect("a passing check keeps its connection");
+        let client = match scenario {
+            "same target" => connection.take_for(&target).await,
+            "embedded fallback" => connection.take_for(&AppServerTarget::Embedded).await,
+            "stale" => {
+                connection
+                    .take_for_at(&target, Instant::now() + Duration::from_secs(60))
+                    .await
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(client.is_some(), scenario == "same target", "{scenario}");
+        if let Some(client) = client {
+            // The session issues its requests over the already initialized connection.
+            client
+                .request_handle()
+                .request_typed::<ConfigRequirementsReadResponse>(
+                    ClientRequest::ConfigRequirementsRead {
+                        request_id: RequestId::String("session-requirements".to_string()),
+                        params: None,
+                    },
+                )
+                .await?;
+            client.shutdown().await?;
+        }
+        let expected = if scenario == "same target" {
+            vec!["initialize", "configRequirements/read"]
+        } else {
+            vec!["initialize"]
+        };
+        assert_eq!(server.await?, expected, "{scenario}");
     }
     Ok(())
 }

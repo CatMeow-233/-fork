@@ -121,16 +121,19 @@ pub(super) async fn configure(
     };
     bootstrap_auth.validate()?;
     let bootstrap_auth_manager = AuthManager::shared_from_auth_config(
-        bootstrap_auth,
+        bootstrap_auth.clone(),
         /*enable_codex_api_key_env*/ false,
     )
     .await
     .map_err(IoError::other)?;
-    config_manager.update_managed_config_loader(bootstrap_auth_manager, &bootstrap_config);
-    let policy_config = config_manager
+    let bootstrap_auth_changes = bootstrap_auth_manager.auth_change_state_receiver();
+    config_manager
+        .update_managed_config_loader(Arc::clone(&bootstrap_auth_manager), &bootstrap_config);
+    let policy_startup = config_manager
         .load_startup_config(Some(config.cwd.to_path_buf()))
-        .await?
-        .config;
+        .await?;
+    let policy_used_defaults = policy_startup.used_defaults;
+    let policy_config = policy_startup.config;
     config.validate_windows_mxc_requirement_from(&policy_config)?;
     let auth_config = codex_login::AuthConfig {
         chatgpt_base_url: Some(policy_config.chatgpt_base_url.clone()),
@@ -144,12 +147,20 @@ pub(super) async fn configure(
         ..caller_auth
     };
     auth_config.validate()?;
-    let policy_auth_manager = AuthManager::shared_from_auth_config(
-        auth_config.clone(),
-        /*enable_codex_api_key_env*/ false,
-    )
-    .await
-    .map_err(IoError::other)?;
+    // Account policy may change these settings. When it does not, a new manager would only
+    // reload what the bootstrap manager already holds.
+    let reuse_bootstrap_auth = auth_config == bootstrap_auth
+        && holds_initial_auth(&bootstrap_auth_manager, &bootstrap_auth_changes);
+    let policy_auth_manager = if reuse_bootstrap_auth {
+        Arc::clone(&bootstrap_auth_manager)
+    } else {
+        AuthManager::shared_from_auth_config(
+            auth_config.clone(),
+            /*enable_codex_api_key_env*/ false,
+        )
+        .await
+        .map_err(IoError::other)?
+    };
     let auth_manager = if enable_codex_api_key_env {
         AuthManager::shared_from_auth_config(auth_config, /*enable_codex_api_key_env*/ true)
             .await
@@ -165,11 +176,34 @@ pub(super) async fn configure(
     config.application_auth_route_config = policy_config.application_auth_route_config;
     config.forced_login_method = policy_config.forced_login_method;
     config.forced_chatgpt_workspace_id = policy_config.forced_chatgpt_workspace_id;
-    config_manager.update_managed_config_loader(policy_auth_manager, config);
+    if reuse_bootstrap_auth
+        && !policy_used_defaults
+        && config_manager.managed_config_loader_inputs_match(config, &bootstrap_config)
+    {
+        // The current loader already serves this manager with the same inputs, and the policy
+        // load above read its snapshot successfully; a replacement would only repeat that load.
+        config_manager.revoke_mcp_ema();
+    } else {
+        config_manager.update_managed_config_loader(policy_auth_manager, config);
+    }
     codex_login::default_client::set_default_client_residency_requirement(
         config.enforce_residency.value(),
     );
     Ok(auth_manager)
+}
+
+/// Whether `manager` still holds what a new manager with the same settings would load:
+/// no credential, owner or policy revision since `changes` was taken, and no refresh outcome
+/// that only this manager remembers.
+fn holds_initial_auth(
+    manager: &AuthManager,
+    changes: &tokio::sync::watch::Receiver<codex_login::AuthChangeState>,
+) -> bool {
+    matches!(changes.has_changed(), Ok(false))
+        && manager.auth_cached().is_none_or(|auth| {
+            manager.refresh_failure_for_auth(&auth).is_none()
+                && matches!(manager.is_chatgpt_refresh_unsettled(&auth), Ok(false))
+        })
 }
 
 #[cfg(test)]

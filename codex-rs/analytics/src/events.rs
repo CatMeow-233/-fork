@@ -1,4 +1,3 @@
-use std::sync::LazyLock;
 use std::time::Duration;
 
 use crate::facts::AppInvocation;
@@ -1576,8 +1575,7 @@ fn analytics_hook_source(source: HookSource) -> &'static str {
 
 pub(crate) fn current_runtime_metadata() -> CodexRuntimeMetadata {
     // Runtime metadata is stable; avoid launching OS discovery subprocesses per event.
-    static OS_INFO: LazyLock<os_info::Info> = LazyLock::new(os_info::get);
-    let os_info = &*OS_INFO;
+    let os_info: &os_info::Info = codex_login::shared_os_info();
     CodexRuntimeMetadata {
         codex_rs_version: env!("CARGO_PKG_VERSION").to_string(),
         runtime_os: std::env::consts::OS.to_string(),

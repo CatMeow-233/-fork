@@ -13,6 +13,7 @@ mod diagnostics;
 mod install_lock;
 mod launch;
 pub use launch::restart_with_features;
+pub use launch::start_for_session_classified;
 pub use launch::start_with_features;
 pub use launch::start_with_features_classified;
 mod managed_install;
@@ -52,6 +53,8 @@ use telemetry::StartFailure;
 use tokio::time::sleep;
 
 const START_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// First delay of [`PollBackoff`]; short waits should not pay a full interval.
+const INITIAL_POLL_INTERVAL: Duration = Duration::from_millis(5);
 // An older updater can pass background policy to a replacement daemon, so retain
 // the longer readiness allowance during upgrades on macOS. On Linux, a cold
 // start from a rotational disk can take more than ten seconds.
@@ -338,6 +341,39 @@ fn ensure_supported_platform() -> Result<()> {
     ))
 }
 
+/// Whether lifecycle output reports the managed binary's version.
+///
+/// The lookup executes the managed binary, so callers that do not show the
+/// version can skip it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManagedVersion {
+    Lookup,
+    Skip,
+}
+
+/// Poll delays that start short and double up to [`START_POLL_INTERVAL`].
+///
+/// Daemon readiness and lock hand-offs usually resolve within a few
+/// milliseconds, so a flat 50ms interval made foreground launches wait for
+/// up to one interval after the condition was already met.
+struct PollBackoff {
+    next: Duration,
+}
+
+impl PollBackoff {
+    fn new() -> Self {
+        Self {
+            next: INITIAL_POLL_INTERVAL,
+        }
+    }
+
+    fn next_delay(&mut self) -> Duration {
+        let delay = self.next;
+        self.next = (self.next * 2).min(START_POLL_INTERVAL);
+        delay
+    }
+}
+
 #[derive(Clone)]
 struct Daemon {
     // Feature-aware TUI startup owns a live terminal. Direct lifecycle commands
@@ -445,6 +481,15 @@ impl Daemon {
         &self,
         feature_overrides: &BTreeMap<String, bool>,
     ) -> Result<LifecycleOutput, StartError> {
+        self.start_with_managed_version(feature_overrides, ManagedVersion::Lookup)
+            .await
+    }
+
+    async fn start_with_managed_version(
+        &self,
+        feature_overrides: &BTreeMap<String, bool>,
+        managed_version: ManagedVersion,
+    ) -> Result<LifecycleOutput, StartError> {
         let mut managed = self.clone();
         let mut settings = self.load_settings().await?;
         let (status, backend, pid, info) = if let Ok(info) = client::probe(&self.socket_path).await
@@ -499,9 +544,20 @@ impl Daemon {
                 "warning: failed to ensure managed updater after app-server start: {err:#}"
             ));
         }
-        Ok(managed
-            .output(status, backend, pid, Some(info.app_server_version))
-            .await)
+        Ok(match managed_version {
+            ManagedVersion::Lookup => {
+                managed
+                    .output(status, backend, pid, Some(info.app_server_version))
+                    .await
+            }
+            ManagedVersion::Skip => managed.output_with_managed_version(
+                status,
+                backend,
+                pid,
+                Some(info.app_server_version),
+                /*managed_codex_version*/ None,
+            ),
+        })
     }
 
     async fn restart_with_settings(&self, settings: DaemonSettings) -> Result<LifecycleOutput> {
@@ -720,13 +776,14 @@ impl Daemon {
         let exited = backend::wait_for_process_exit(&self.pid_file);
         tokio::pin!(exited);
         let deadline = tokio::time::Instant::now() + START_TIMEOUT;
+        let mut backoff = PollBackoff::new();
         let (err, exited_before_ready) = loop {
             match client::probe(&self.socket_path).await {
                 Ok(info) => return Ok(info),
                 Err(err) if tokio::time::Instant::now() < deadline => {
                     tokio::select! {
                         () = &mut exited => break (err, true),
-                        () = sleep(START_POLL_INTERVAL) => {}
+                        () = sleep(backoff.next_delay()) => {}
                     }
                 }
                 Err(err) => break (err, false),
@@ -1034,7 +1091,10 @@ impl Daemon {
             }
             return Ok(false);
         };
-        if !managed_install::supports_daemon_update_loop(&codex_bin).await
+        let support_cache = self
+            .update_pid_file
+            .with_file_name(managed_install::UPDATE_LOOP_SUPPORT_CACHE_FILE_NAME);
+        if !managed_install::supports_daemon_update_loop_cached(&codex_bin, &support_cache).await
             || !self.is_stable_standalone_release()?
             || !managed_install::resolved_managed_codex_bin(&self.managed_codex_bin)
                 .await
@@ -1147,6 +1207,7 @@ impl Daemon {
     async fn acquire_operation_lock(&self) -> Result<tokio::fs::File> {
         let operation_lock = self.open_operation_lock_file().await?;
         let deadline = tokio::time::Instant::now() + OPERATION_LOCK_TIMEOUT;
+        let mut backoff = PollBackoff::new();
         while !try_lock_file(&operation_lock)? {
             if tokio::time::Instant::now() >= deadline {
                 return Err(anyhow!(
@@ -1154,7 +1215,7 @@ impl Daemon {
                     self.operation_lock_file.display()
                 ));
             }
-            sleep(START_POLL_INTERVAL).await;
+            sleep(backoff.next_delay()).await;
         }
         Ok(operation_lock)
     }
@@ -1196,6 +1257,23 @@ impl Daemon {
         app_server_version: Option<String>,
     ) -> LifecycleOutput {
         let managed_codex_version = self.managed_codex_version_best_effort().await;
+        self.output_with_managed_version(
+            status,
+            backend,
+            pid,
+            app_server_version,
+            managed_codex_version,
+        )
+    }
+
+    fn output_with_managed_version(
+        &self,
+        status: LifecycleStatus,
+        backend: Option<BackendKind>,
+        pid: Option<u32>,
+        app_server_version: Option<String>,
+        managed_codex_version: Option<String>,
+    ) -> LifecycleOutput {
         LifecycleOutput {
             status,
             backend,

@@ -4,15 +4,41 @@
 //! preference preserves configured behavior; an explicit request for less motion suppresses all
 //! effects governed by `tui.animations`. Restart the TUI after changing the OS preference.
 
+use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::PoisonError;
 
 use crate::motion::MotionMode;
 
 static SYSTEM_MOTION: OnceLock<MotionMode> = OnceLock::new();
+static PENDING_DETECTION: Mutex<Option<tokio::task::JoinHandle<()>>> = Mutex::new(None);
 
 pub(crate) async fn initialize() {
     let mode = detect().await.unwrap_or(MotionMode::Animated);
     let _ = SYSTEM_MOTION.set(mode);
+}
+
+/// Start detection in the background so it overlaps other launch work.
+///
+/// On Linux detection is a session-bus round trip that can take up to its
+/// timeout; nothing reads the preference until local settings are built, so
+/// launch only joins it there through [`wait_initialized`].
+pub(crate) fn start_initialize() {
+    let detection = tokio::spawn(initialize());
+    *PENDING_DETECTION
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(detection);
+}
+
+/// Finish detection started by [`start_initialize`] before the preference is read.
+pub(crate) async fn wait_initialized() {
+    let detection = PENDING_DETECTION
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Some(detection) = detection {
+        let _ = detection.await;
+    }
 }
 
 pub(crate) fn mode() -> MotionMode {

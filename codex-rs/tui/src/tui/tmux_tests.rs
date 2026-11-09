@@ -154,3 +154,50 @@ fn keyboard_fallback_preserves_confirmed_mouse_policy_without_guessing_on_failur
     }
     assert_eq!(read_options(Some("%42"), |_| None), Options::default());
 }
+
+fn startup_options() -> Options {
+    Options {
+        extended_keys_format: Some("csi-u".to_owned()),
+        mouse_capture: MouseCapture::DisabledByTmux,
+        kitty_image_base: Some(0x80_2a00),
+    }
+}
+
+#[test]
+fn startup_probe_is_reused_once_while_fresh() {
+    let probed_at = Instant::now();
+    let retained = Mutex::new(Some((probed_at, startup_options())));
+    let mut probes = 0;
+
+    assert_eq!(
+        take_retained_or_probe(&retained, probed_at + STARTUP_OPTIONS_REUSE_WINDOW, || {
+            probes += 1;
+            Options::default()
+        }),
+        startup_options()
+    );
+    assert_eq!(
+        take_retained_or_probe(&retained, probed_at, || {
+            probes += 1;
+            Options::default()
+        }),
+        Options::default()
+    );
+    assert_eq!(probes, 1);
+}
+
+#[test]
+fn stale_startup_probe_is_discarded_for_a_fresh_probe() {
+    let probed_at = Instant::now();
+    let retained = Mutex::new(Some((probed_at, startup_options())));
+
+    assert_eq!(
+        take_retained_or_probe(
+            &retained,
+            probed_at + STARTUP_OPTIONS_REUSE_WINDOW + Duration::from_millis(/*millis*/ 1),
+            Options::default,
+        ),
+        Options::default()
+    );
+    assert_eq!(*retained.lock().unwrap(), None);
+}

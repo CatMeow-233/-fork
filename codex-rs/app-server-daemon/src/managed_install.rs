@@ -120,6 +120,70 @@ pub(crate) async fn supports_daemon_update_loop(codex_bin: &Path) -> bool {
     supports_daemon_command(codex_bin, &["pid-update-loop", "--help"]).await
 }
 
+/// State-directory file remembering the last release binary that supports the update loop.
+pub(crate) const UPDATE_LOOP_SUPPORT_CACHE_FILE_NAME: &str = "update-loop-support.json";
+
+/// Identifies one release binary by location, size and modification time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseBinaryFingerprint {
+    codex_bin: PathBuf,
+    len: u64,
+    modified_secs: u64,
+    modified_nanos: u32,
+}
+
+impl ReleaseBinaryFingerprint {
+    async fn read(codex_bin: &Path) -> Option<Self> {
+        let metadata = fs::metadata(codex_bin).await.ok()?;
+        let modified = metadata
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        Some(Self {
+            codex_bin: codex_bin.to_path_buf(),
+            len: metadata.len(),
+            modified_secs: modified.as_secs(),
+            modified_nanos: modified.subsec_nanos(),
+        })
+    }
+}
+
+/// Probe update-loop support at most once per release binary.
+///
+/// Launches call this on every start, and each probe executes the binary while the
+/// lifecycle lock is held. Stable releases live in version-named directories that are
+/// never rewritten in place, so a successful probe stays valid while the binary keeps
+/// the same path, size and modification time. Failures are not cached because a probe
+/// can time out transiently.
+pub(crate) async fn supports_daemon_update_loop_cached(
+    codex_bin: &Path,
+    cache_file: &Path,
+) -> bool {
+    let fingerprint = ReleaseBinaryFingerprint::read(codex_bin).await;
+    if let Some(fingerprint) = &fingerprint
+        && let Ok(bytes) = fs::read(cache_file).await
+        && serde_json::from_slice::<ReleaseBinaryFingerprint>(&bytes)
+            .is_ok_and(|cached| &cached == fingerprint)
+    {
+        return true;
+    }
+    let supported = supports_daemon_update_loop(codex_bin).await;
+    if supported
+        && let Some(fingerprint) = fingerprint
+        && let Ok(bytes) = serde_json::to_vec(&fingerprint)
+    {
+        // Best effort: a missing cache only costs the next launch another probe.
+        let staged = cache_file.with_extension(format!("{}.tmp", std::process::id()));
+        if fs::write(&staged, bytes).await.is_ok() && fs::rename(&staged, cache_file).await.is_err()
+        {
+            let _ = fs::remove_file(&staged).await;
+        }
+    }
+    supported
+}
+
 /// Probe an internal daemon command without running a long-lived process.
 pub(crate) async fn supports_daemon_command(codex_bin: &Path, args: &[&str]) -> bool {
     let mut command = Command::new(codex_bin);

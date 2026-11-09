@@ -31,19 +31,18 @@ pub(crate) enum VscodeDetection {
 
 pub(super) fn keyboard_enhancement_disabled() -> bool {
     let disable_env = std::env::var(DISABLE_KEYBOARD_ENHANCEMENT_ENV_VAR).ok();
-    let is_wsl = running_in_wsl();
-    let vscode_detection = if is_wsl {
-        detect_vscode_terminal()
-    } else {
-        VscodeDetection::Other
-    };
-    keyboard_enhancement_disabled_for(disable_env.as_deref(), is_wsl, vscode_detection)
+    keyboard_enhancement_disabled_for(
+        disable_env.as_deref(),
+        running_in_wsl,
+        detect_vscode_terminal,
+    )
 }
 
+/// Detection runs only when the env override does not decide: on WSL it launches `cmd.exe`.
 fn keyboard_enhancement_disabled_for(
     disable_env: Option<&str>,
-    is_wsl: bool,
-    vscode_detection: VscodeDetection,
+    is_wsl: impl FnOnce() -> bool,
+    vscode_detection: impl FnOnce() -> VscodeDetection,
 ) -> bool {
     if let Some(disabled) = parse_bool_env(disable_env) {
         return disabled;
@@ -52,9 +51,9 @@ fn keyboard_enhancement_disabled_for(
     // VS Code running a WSL shell can hide TERM_PROGRAM from the Linux process
     // environment. If the Windows-side probe is inconclusive, avoid enabling the
     // keyboard mode that can break dead-key composition in VS Code on WSL.
-    is_wsl
+    is_wsl()
         && matches!(
-            vscode_detection,
+            vscode_detection(),
             VscodeDetection::VsCode | VscodeDetection::Unknown
         )
 }
@@ -163,8 +162,9 @@ fn read_windows_vscode_detection_with_timeout(
                 while std::time::Instant::now() < deadline {
                     match child.try_wait() {
                         Ok(Some(_)) => return child.wait_with_output().ok(),
+                        // Startup waits on this result, so poll finely; each check is cheap.
                         Ok(None) => {
-                            std::thread::sleep(std::time::Duration::from_millis(/*millis*/ 10))
+                            std::thread::sleep(std::time::Duration::from_millis(/*millis*/ 1))
                         }
                         Err(_) => break,
                     }
@@ -211,7 +211,14 @@ mod windows_term_program_tests;
 
 /// Restore keyboard reporting and return the settings from the same tmux probe.
 pub(super) fn enable_keyboard_enhancement(writer: &mut impl Write) -> super::tmux::Options {
-    let tmux_options = super::tmux::options();
+    enable_keyboard_enhancement_with(writer, super::tmux::options())
+}
+
+/// Restore keyboard reporting using tmux settings the caller already probed.
+pub(super) fn enable_keyboard_enhancement_with(
+    writer: &mut impl Write,
+    tmux_options: super::tmux::Options,
+) -> super::tmux::Options {
     if keyboard_enhancement_disabled() {
         set_reports_key_releases(/*reports*/ false);
         return tmux_options;
@@ -507,13 +514,13 @@ mod tests {
             VscodeDetection::Unknown,
         ] {
             assert_eq!(
-                keyboard_enhancement_disabled_for(
-                    /*disable_env*/ None, /*is_wsl*/ true, detection
-                ),
+                keyboard_enhancement_disabled_for(/*disable_env*/ None, || true, || detection),
                 detection != VscodeDetection::Other,
             );
             assert!(!keyboard_enhancement_disabled_for(
-                /*disable_env*/ None, /*is_wsl*/ false, detection
+                /*disable_env*/ None,
+                || false,
+                || detection
             ));
         }
     }
@@ -527,15 +534,37 @@ mod tests {
         ] {
             assert!(!keyboard_enhancement_disabled_for(
                 Some("0"),
-                /*is_wsl*/ true,
-                detection
+                || true,
+                || detection
             ));
             assert!(keyboard_enhancement_disabled_for(
                 Some("1"),
-                /*is_wsl*/ false,
-                detection
+                || false,
+                || detection
             ));
         }
+    }
+
+    #[test]
+    fn keyboard_enhancement_detection_runs_only_when_env_flag_does_not_decide() {
+        let unexpected_wsl_check = || -> bool { panic!("env override should skip WSL detection") };
+        let unexpected_vscode_check =
+            || -> VscodeDetection { panic!("env override should skip VS Code detection") };
+        assert!(keyboard_enhancement_disabled_for(
+            Some("1"),
+            unexpected_wsl_check,
+            unexpected_vscode_check
+        ));
+        assert!(!keyboard_enhancement_disabled_for(
+            Some("0"),
+            unexpected_wsl_check,
+            unexpected_vscode_check
+        ));
+        assert!(!keyboard_enhancement_disabled_for(
+            /*disable_env*/ None,
+            || false,
+            unexpected_vscode_check
+        ));
     }
 
     #[test]
