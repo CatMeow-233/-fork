@@ -655,15 +655,38 @@ debug = "none"
 strip = "symbols"
 
 [profile.release]
+# Workspace crates are optimized for size; dependencies stay at opt-level 3
+# through the `"*"` override below. Most of the binary is this workspace's
+# async and serde code, which rustc instantiates again in every crate that
+# drives it unless generics are shared across crates, and rustc only shares
+# them at size-oriented opt-levels.
+opt-level = "s"
 lto = "thin"
-debug = "line-tables-only"
+# A release build is what gets run or shipped, so it has no debug info and is
+# stripped. Line tables alone made the linked binary about seven times larger
+# and the thin-LTO link far slower and more memory hungry. Release CI turns
+# them back on (CARGO_PROFILE_RELEASE_DEBUG and CARGO_PROFILE_RELEASE_STRIP)
+# to archive symbols before packaging strips the binaries.
+debug = false
 split-debuginfo = "off"
-# Keep release binaries symbolicateable until packaging has archived the
-# sidecar symbols and stripped the binaries.
-strip = false
+strip = "symbols"
 
 # Balance parallel release code generation against binary size.
 codegen-units = 4
+
+# Third-party code keeps full optimization: hot loops (regex, JSON, TLS,
+# compression, rendering) live there, and it is a small share of the binary.
+[profile.release.package."*"]
+opt-level = 3
+
+# SQLite recommends -Os for itself; queries here are small and I/O bound.
+[profile.release.package.libsqlite3-sys]
+opt-level = "s"
+
+# One codegen unit for the binary crate: it instantiates most of the async
+# call tree, and inlined helpers are otherwise copied into every unit.
+[profile.release.package.codex-cli]
+codegen-units = 1
 
 [profile.profiling]
 inherits = "release"

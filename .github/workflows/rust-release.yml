@@ -77,6 +77,11 @@ jobs:
       ARTIFACT_SUFFIX: ${{ matrix.build-system == 'bazel' && '-bazel' || '' }}
       # Archive packed macOS dSYMs before stripping the Cargo binaries.
       CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ contains(matrix.target, 'apple-darwin') && 'packed' || 'off' }}
+      # The release profile is stripped and has no debug info by default. Keep
+      # line tables and symbols here so they are archived before packaging
+      # strips the binaries.
+      CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+      CARGO_PROFILE_RELEASE_STRIP: none
       # The git CLI reliably fetches nested native-library submodules on macOS.
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 

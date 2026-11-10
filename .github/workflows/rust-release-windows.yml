@@ -25,6 +25,10 @@ jobs:
     env:
       # Preserve Cargo names while teams opt into the additional Bazel artifacts.
       ARTIFACT_SUFFIX: ${{ matrix.build-system == 'bazel' && '-bazel' || '' }}
+      # The release profile has no debug info by default. PDBs are staged and
+      # archived below, so keep line tables for release builds.
+      CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+      CARGO_PROFILE_RELEASE_STRIP: none
 
     strategy:
       fail-fast: false

@@ -70,7 +70,9 @@ so the package preserves the signed host and executor beside the entrypoint.
 
 On Linux and macOS, the builder strips symbols from the **package copies** of
 source-built release-profile entrypoint, code-mode host, and executor binaries. Cargo outputs
-retain their symbols for debugging. The default `--strip auto` also preserves
+are left as built: the release profile strips them itself unless
+`CARGO_PROFILE_RELEASE_STRIP=none` is set, as release CI does to archive symbols.
+The default `--strip auto` also preserves
 development/profiling builds and prebuilt inputs
 byte-for-byte, including signatures. Use `--strip all` to also strip prebuilt
 first-party executable copies, or `--strip none` to keep symbols in every package copy.

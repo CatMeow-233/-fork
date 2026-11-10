@@ -25,6 +25,12 @@ runs:
       run: |
         set -euo pipefail
         echo "CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=$CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO" >> "$GITHUB_ENV"
+        # The release profile builds without debug info and strips. Symbol archiving
+        # needs line tables and unstripped binaries (and PDBs on Windows).
+        {
+          echo "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only"
+          echo "CARGO_PROFILE_RELEASE_STRIP=none"
+        } >> "$GITHUB_ENV"
         case "$BUILD_MODE" in
           release) ;;
           debug)
