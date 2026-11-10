@@ -19,6 +19,9 @@ Examples:
     # Simulate a metrics collector that is 400 ms away.
     scripts/startup_bench.py --codex codex-rs/target/debug/codex --daemon --metrics-rtt-ms 400
 
+    # CPU cost of rendering a long Markdown reply (compare two builds).
+    scripts/startup_bench.py --codex codex-rs/target/release/codex --no-daemon --reply-kb 200
+
 Daemon mode needs a packaged CLI, so the binary is copied into a minimal
 package layout under the benchmark's temporary directory.
 """
@@ -64,9 +67,10 @@ PROBE_REPLIES = [
 class MockResponses(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, metrics_delay: float) -> None:
+    def __init__(self, metrics_delay: float, reply_text: str) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
         self.metrics_delay = metrics_delay
+        self.reply_text = reply_text
         self.lock = threading.Lock()
         self.first_responses_post: float | None = None
 
@@ -119,7 +123,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                     "type": "message",
                     "role": "assistant",
                     "id": "msg_1",
-                    "content": [{"type": "output_text", "text": REPLY_TEXT}],
+                    "content": [
+                        {"type": "output_text", "text": self.server.reply_text}
+                    ],
                 },
             },
             {
@@ -132,6 +138,32 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         ]
         body = "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
         self._reply(200, body.encode(), "text/event-stream")
+
+
+def reply_text(kilobytes: int) -> str:
+    """A Markdown reply of about `kilobytes` KB that ends with the marker."""
+    section = (
+        "## Section {n}\n\n"
+        "Plain prose with **bold**, _emphasis_, `inline code` and a "
+        "[link](https://example.com/{n}) so wrapping and styling both run.\n\n"
+        "- first item {n}\n- second item with `code`\n  - nested item\n\n"
+        "```rust\nfn section_{n}(input: &str) -> Option<usize> {{\n"
+        "    let total: usize = input.lines().map(str::len).sum();\n"
+        '    (total > {n}).then_some(total) // "string" and 0x{n:x}\n}}\n```\n\n'
+        "```json\n"
+        '{{"id": {n}, "name": "section-{n}", "tags": ["a", "b"], "ok": true}}\n'
+        "```\n\n"
+        "| column | value |\n|---|---|\n| n | {n} |\n| square | {sq} |\n\n"
+    )
+    parts: list[str] = []
+    size = 0
+    n = 0
+    while size < kilobytes * 1024:
+        n += 1
+        parts.append(section.format(n=n, sq=n * n))
+        size += len(parts[-1])
+    parts.append(REPLY_TEXT)
+    return "".join(parts)
 
 
 def write_config(home: Path, workdir: Path, port: int, metrics: bool) -> None:
@@ -249,13 +281,15 @@ def run_once(
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        os.waitpid(pid, 0)
+        _, _, usage = os.wait4(pid, 0)
         os.close(fd)
     first_post = server.first_responses_post
     return {
         "composer_visible_s": draft_at,
         "first_request_s": None if first_post is None else first_post - start,
         "reply_rendered_s": reply_at,
+        # CPU the TUI process itself used (a daemon's share is not included).
+        "cpu_s": usage.ru_utime + usage.ru_stime,
     }
 
 
@@ -286,11 +320,20 @@ def main() -> int:
         default=None,
         help="configure a slow OTLP metrics exporter",
     )
+    parser.add_argument(
+        "--reply-kb",
+        type=int,
+        default=0,
+        help="make the mock reply a Markdown document of about this many KB",
+    )
     parser.add_argument("--enter-delay", type=float, default=0.3)
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
 
-    server = MockResponses(metrics_delay=(args.metrics_rtt_ms or 0) / 1000)
+    server = MockResponses(
+        metrics_delay=(args.metrics_rtt_ms or 0) / 1000,
+        reply_text=reply_text(args.reply_kb) if args.reply_kb else REPLY_TEXT,
+    )
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
     results = []
@@ -327,6 +370,8 @@ def main() -> int:
         print(
             f"first request: median {statistics.median(samples):.3f}s, min {min(samples):.3f}s, max {max(samples):.3f}s"
         )
+    cpu = [r["cpu_s"] for r in results]
+    print(f"process CPU: median {statistics.median(cpu):.3f}s, min {min(cpu):.3f}s")
     return 0 if len(samples) == len(results) else 1
 
 
