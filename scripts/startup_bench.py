@@ -288,7 +288,8 @@ def run_once(
         "composer_visible_s": draft_at,
         "first_request_s": None if first_post is None else first_post - start,
         "reply_rendered_s": reply_at,
-        # CPU the TUI process itself used (a daemon's share is not included).
+        # CPU of the TUI process and the helpers it waited for. A daemon is
+        # detached, so its share is not included.
         "cpu_s": usage.ru_utime + usage.ru_stime,
     }
 
@@ -371,7 +372,8 @@ def main() -> int:
             f"first request: median {statistics.median(samples):.3f}s, min {min(samples):.3f}s, max {max(samples):.3f}s"
         )
     cpu = [r["cpu_s"] for r in results]
-    print(f"process CPU: median {statistics.median(cpu):.3f}s, min {min(cpu):.3f}s")
+    if cpu:
+        print(f"process CPU: median {statistics.median(cpu):.3f}s, min {min(cpu):.3f}s")
     return 0 if len(samples) == len(results) else 1
 
 

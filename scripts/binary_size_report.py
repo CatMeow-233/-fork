@@ -12,9 +12,12 @@ the binutils tools `size` and `nm`. It prints:
     copy, so this shows how much of the binary is repeated code.
 
 Examples:
-    # Build with symbols but without debug info, then report.
+    # Build with symbols but without debug info, then report. The second
+    # --config is needed because the codex-cli profile override sets strip.
     cd codex-rs
-    CARGO_PROFILE_RELEASE_STRIP=none cargo build --release -p codex-cli --bin codex
+    cargo build --release -p codex-cli --bin codex \\
+        --config 'profile.release.strip="none"' \\
+        --config 'profile.release.package.codex-cli.strip="none"'
     ../scripts/binary_size_report.py target/release/codex
 
     # Compare two builds crate by crate.
@@ -46,6 +49,8 @@ STD_CRATES = {
     "rustc_demangle",
 }
 NOT_LOADED = (".debug", ".symtab", ".strtab", ".comment", ".shstrtab")
+# Zero-filled at load time: these have a size but take no bytes in the file.
+NO_FILE_BYTES = {".bss", ".tbss"}
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # The first segment of a path: at the start, or after `<`, `(`, `&`, `,` and the like.
 PATH_HEAD = re.compile(r"(?:^|[<(\[\s,&*])([a-z_][a-z0-9_]*)::")
@@ -81,10 +86,14 @@ def crate_of(name: str) -> str:
         and stripped.startswith(first + "::")
     ):
         return first
-    for candidate in PATH_HEAD.findall(name):
+    candidates = PATH_HEAD.findall(name)
+    for candidate in candidates:
         if candidate not in STD_CRATES:
             return candidate
-    return "(std)" if first in STD_CRATES else first or "?"
+    # Only std paths, such as `<&T as core::fmt::Debug>::fmt`.
+    if candidates or first in STD_CRATES:
+        return "(std)"
+    return "(unattributed)"
 
 
 def read_symbols(binary: str) -> list[tuple[int, str, str]]:
@@ -125,9 +134,14 @@ def main() -> int:
     args = parser.parse_args()
 
     sections = section_sizes(args.binary)
-    loaded = {k: v for k, v in sections.items() if not k.startswith(NOT_LOADED)}
+    loaded = {
+        k: v
+        for k, v in sections.items()
+        if not k.startswith(NOT_LOADED) and k not in NO_FILE_BYTES
+    }
     file_size = os.path.getsize(args.binary)
     # `size` does not list the symbol and string tables, so take the remainder.
+    # ELF headers and alignment padding land there too.
     print(f"file on disk        {megabytes(file_size)}")
     print(f"symbols and debug   {megabytes(file_size - sum(loaded.values()))}")
     print(f"loaded sections     {megabytes(sum(loaded.values()))}")
@@ -136,7 +150,7 @@ def main() -> int:
 
     symbols = read_symbols(args.binary)
     if not symbols:
-        print("\nno symbol table: build with CARGO_PROFILE_RELEASE_STRIP=none")
+        print("\nno symbol table: rebuild without stripping, see --help")
         return 1
     by_crate: collections.Counter[str] = collections.Counter()
     by_path: dict[str, list[int]] = collections.defaultdict(list)
