@@ -4,7 +4,8 @@ load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("@rules_pkg//pkg:providers.bzl", "PackageFilegroupInfo", "PackageFilesInfo")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 
-# Keep the profile in sync with --config=release in .bazelrc and Cargo.toml.
+# Keep the profile in sync with --config=release in .bazelrc. Cargo.toml's
+# release profile differs on purpose; see the note in .bazelrc.
 # Archive targets apply it themselves, including when built without CI flags.
 _RUSTC_FLAGS = "@rules_rust//rust/settings:extra_rustc_flag"
 _EXEC_RUSTC_FLAGS = "@rules_rust//rust/settings:extra_exec_rustc_flag"
@@ -39,8 +40,9 @@ def _release_profile_impl(settings, attr):
             "-Copt-level=0",
             "-Cdebug-assertions=no",
         ] if smoke else []),
-        # Cargo release build tools use opt-level=0, assertions/checks off,
-        # and rustc's default 16 CGUs. Overflow checks follow debug assertions.
+        # Cargo release build tools in the workspace use opt-level=0,
+        # assertions/checks off, and rustc's default 16 CGUs. Overflow checks
+        # follow debug assertions.
         _EXEC_RUSTC_FLAGS: settings[_EXEC_RUSTC_FLAGS] + [
             "-Copt-level=0",
             "-Ccodegen-units=16",

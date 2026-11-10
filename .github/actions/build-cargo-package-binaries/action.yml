@@ -26,7 +26,8 @@ runs:
         set -euo pipefail
         echo "CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=$CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO" >> "$GITHUB_ENV"
         # The release profile builds without debug info and strips. Symbol archiving
-        # needs line tables and unstripped binaries (and PDBs on Windows).
+        # needs line tables and unstripped binaries (and PDBs on Windows). The build
+        # step below also passes a --config for the codex-cli package override.
         {
           echo "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only"
           echo "CARGO_PROFILE_RELEASE_STRIP=none"
@@ -126,17 +127,32 @@ runs:
       env:
         TARGET: ${{ inputs.target }}
         BINARIES: ${{ inputs.binaries }}
+        BUILD_MODE: ${{ inputs.build-mode }}
       run: |
         set -euo pipefail
         build_args=()
         for binary in $BINARIES; do
           build_args+=(--bin "$binary")
         done
+        # Package overrides in Cargo.toml outrank the CARGO_PROFILE_RELEASE_*
+        # variables, so they are adjusted with --config. The codex-cli override
+        # sets `strip` itself.
+        profile_args=(--config 'profile.release.package.codex-cli.strip="none"')
+        if [[ "$BUILD_MODE" == "debug" ]]; then
+          profile_args+=(
+            --config 'profile.release.package."*".opt-level=0'
+            --config 'profile.release.package.libsqlite3-sys.opt-level=0'
+            --config 'profile.release.package.codex-cli.opt-level=0'
+            --config 'profile.release.package.codex-cli.codegen-units=256'
+          )
+        fi
         # SQLite intrinsics can emit instructions unsupported by older x64
         # CPUs, causing Windows release binaries to crash during startup.
         if [[ "${TARGET}" == "x86_64-pc-windows-msvc" ]]; then
-          export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
+          # This replaces the value in codex-rs/.cargo/config.toml, so repeat
+          # the unused-feature flags from there.
+          export LIBSQLITE3_FLAGS="SQLITE_DISABLE_INTRINSIC -USQLITE_ENABLE_FTS3 -USQLITE_ENABLE_FTS3_PARENTHESIS -USQLITE_ENABLE_FTS5 -USQLITE_ENABLE_RTREE -USQLITE_ENABLE_DBSTAT_VTAB -USQLITE_SOUNDEX"
         fi
         STABLE_GIT_COMMIT="$(git rev-parse HEAD)"
         export STABLE_GIT_COMMIT
-        cargo build --target "${TARGET}" --release --timings "${build_args[@]}"
+        cargo build --target "${TARGET}" --release --timings "${profile_args[@]}" "${build_args[@]}"

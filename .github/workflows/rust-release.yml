@@ -79,7 +79,8 @@ jobs:
       CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ contains(matrix.target, 'apple-darwin') && 'packed' || 'off' }}
       # The release profile is stripped and has no debug info by default. Keep
       # line tables and symbols here so they are archived before packaging
-      # strips the binaries.
+      # strips the binaries. The Cargo build step also passes a --config for
+      # the codex-cli package override, which these variables do not reach.
       CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
       CARGO_PROFILE_RELEASE_STRIP: none
       # The git CLI reliably fetches nested native-library submodules on macOS.
@@ -271,7 +272,11 @@ jobs:
           done
           STABLE_GIT_COMMIT="$(git rev-parse HEAD)"
           export STABLE_GIT_COMMIT
-          cargo build --target "$target" --release --timings "${build_args[@]}"
+          # CARGO_PROFILE_RELEASE_STRIP does not reach the codex-cli package,
+          # whose profile override sets `strip` itself.
+          cargo build --target "$target" --release --timings \
+            --config 'profile.release.package.codex-cli.strip="none"' \
+            "${build_args[@]}"
 
       - name: Prepare Bazel for release binaries or Linux voice
         if: matrix.build-system == 'bazel' || (matrix.bundle == 'primary' && contains(matrix.target, 'linux'))

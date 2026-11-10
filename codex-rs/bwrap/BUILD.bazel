@@ -57,8 +57,9 @@ cc_library(
         "-D_GNU_SOURCE",
         "-Dmain=bwrap_main",
     ] + select({
-        # Cargo cc-rs uses release OPT_LEVEL=3 and DEBUG=true, without
-        # the C toolchain's default NDEBUG; retain native symbols for packaging.
+        # Cargo cc-rs builds without the C toolchain's default NDEBUG. It now
+        # uses OPT_LEVEL=s, and DEBUG=true only in release CI; this keeps -O3
+        # and retains native symbols for packaging.
         ":optimized": [
             "-O3",
             "-g",

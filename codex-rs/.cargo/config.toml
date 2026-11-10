@@ -4,7 +4,10 @@ JEMALLOC_SYS_WITH_MALLOC_CONF = "narenas_ratio:0.25"
 
 # The bundled SQLite always compiles in full-text search, R-Tree, dbstat and
 # soundex. No schema or query here uses them, and the linker cannot drop them
-# because SQLite registers them through static tables.
+# because SQLite registers them through static tables. A LIBSQLITE3_FLAGS
+# variable in the environment replaces this value, so the Windows x64 release
+# builds repeat these flags. Bazel builds do not read this file and keep the
+# full feature set.
 LIBSQLITE3_FLAGS = "-USQLITE_ENABLE_FTS3 -USQLITE_ENABLE_FTS3_PARENTHESIS -USQLITE_ENABLE_FTS5 -USQLITE_ENABLE_RTREE -USQLITE_ENABLE_DBSTAT_VTAB -USQLITE_SOUNDEX"
 
 # curl-sys enables its NTLM sources but does not set the flag required by libcurl 8.21.

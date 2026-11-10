@@ -245,7 +245,10 @@ build:ci-windows-msvc --host_action_env=WindowsSdkDir
 build:ci-windows-msvc --action_env=VCINSTALLDIR
 build:ci-windows-msvc --host_action_env=VCINSTALLDIR
 
-# Release profile settings are also defined in codex-rs/Cargo.toml.
+# Release profile settings are also defined in codex-rs/Cargo.toml, and the two
+# differ: Cargo builds workspace crates at opt-level "s" (dependencies and the
+# codex-cli package at 3) and trims the bundled SQLite, while this config builds
+# everything at opt-level 3 with the full SQLite.
 # runtime_package.bzl applies this profile to archive dependencies automatically.
 # Packaging extracts symbols before stripping; the Rust toolchains retain
 # line tables and use split-debuginfo=off. opt mode selects Rust opt-level=3,
@@ -253,8 +256,9 @@ build:ci-windows-msvc --host_action_env=VCINSTALLDIR
 build:release --compilation_mode=opt
 build:release --@rules_rust//rust/settings:lto=thin
 build:release --@rules_rust//rust/settings:codegen_units=4
-# Match observed Cargo 1.95 build-tool commands: opt-level=0, assertions off,
-# and rustc's non-incremental default of 16 codegen units (not target's 4).
+# Match Cargo 1.95 build-tool commands for workspace crates: opt-level=0,
+# assertions off, and rustc's non-incremental default of 16 codegen units (not
+# target's 4). Cargo now builds third-party build tools at opt-level 3.
 build:release --@rules_rust//rust/settings:extra_exec_rustc_flag=-Copt-level=0
 build:release --@rules_rust//rust/settings:extra_exec_rustc_flag=-Ccodegen-units=16
 build:release --@rules_rust//rust/settings:extra_exec_rustc_flag=-Cdebug-assertions=no

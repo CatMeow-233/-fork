@@ -139,7 +139,9 @@ jobs:
         run: |
           target="${{ matrix.target }}"
           if [[ "$target" == "x86_64-pc-windows-msvc" ]]; then
-            export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
+            # This replaces the value in codex-rs/.cargo/config.toml, so repeat
+            # the unused-feature flags from there.
+            export LIBSQLITE3_FLAGS="SQLITE_DISABLE_INTRINSIC -USQLITE_ENABLE_FTS3 -USQLITE_ENABLE_FTS3_PARENTHESIS -USQLITE_ENABLE_FTS5 -USQLITE_ENABLE_RTREE -USQLITE_ENABLE_DBSTAT_VTAB -USQLITE_SOUNDEX"
           fi
           build_args=()
           for binary in ${{ matrix.binaries }}; do
@@ -147,7 +149,11 @@ jobs:
           done
           STABLE_GIT_COMMIT="$(git rev-parse HEAD)"
           export STABLE_GIT_COMMIT
-          cargo build --target "$target" --release --timings "${build_args[@]}"
+          # CARGO_PROFILE_RELEASE_STRIP does not reach the codex-cli package,
+          # whose profile override sets `strip` itself.
+          cargo build --target "$target" --release --timings \
+            --config 'profile.release.package.codex-cli.strip="none"' \
+            "${build_args[@]}"
 
       - name: Stage Windows binaries
         shell: bash
