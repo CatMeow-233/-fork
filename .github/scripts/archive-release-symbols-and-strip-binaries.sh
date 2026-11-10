@@ -85,12 +85,26 @@ case "$target" in
   *linux*)
     objcopy_bin="${OBJCOPY:-objcopy}"
     strip_bin="${STRIP:-strip}"
+    readelf_bin="${READELF:-readelf}"
     for binary in "${binary_names[@]}"; do
       binary_path="${release_dir%/}/${binary}"
       debug_path="${symbols_dir}/${binary}.debug"
       if [[ ! -f "$binary_path" ]]; then
         echo "Binary $binary_path not found" >&2
         exit 1
+      fi
+
+      # A binary that was already stripped would yield an empty symbols file
+      # without any error. Cargo builds keep debug info through
+      # CARGO_PROFILE_RELEASE_DEBUG, CARGO_PROFILE_RELEASE_STRIP and, for a
+      # package whose profile override sets `strip`, a matching `--config`.
+      if sections="$("$readelf_bin" --section-headers --wide "$binary_path" 2>/dev/null)"; then
+        if [[ "$sections" != *"debug_line"* ]]; then
+          echo "Binary $binary_path has no debug line tables; was it built stripped?" >&2
+          exit 1
+        fi
+      else
+        echo "warning: $readelf_bin could not read $binary_path; debug info not checked" >&2
       fi
 
       "$objcopy_bin" --only-keep-debug "$binary_path" "$debug_path"
