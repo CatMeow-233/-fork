@@ -499,13 +499,14 @@ fn package_tree(
             {
                 *digest
             } else {
-                let bytes = std::fs::read(&path)?;
-                let digest = blake3::hash(&bytes);
-                if let Some(destination) = destination {
+                let digest = if let Some(destination) = destination {
                     let target = destination.join(relative);
-                    std::fs::write(&target, bytes)?;
+                    let digest = stage_file(&path, &target)?;
                     std::fs::set_permissions(target, metadata.permissions())?;
-                }
+                    digest
+                } else {
+                    hash_file(&path)?
+                };
                 file_digests.insert(relative.to_path_buf(), digest);
                 digest
             };
@@ -519,6 +520,32 @@ fn package_tree(
         }
     }
     Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// Copy one package file into the staging tree and return the digest of the staged bytes.
+#[cfg(target_os = "linux")]
+fn stage_file(source: &Path, target: &Path) -> std::io::Result<blake3::Hash> {
+    // The kernel copy shares extents on copy-on-write filesystems (btrfs, XFS
+    // reflinks), so the daemon's package does not store the executables a second
+    // time, and it keeps multi-hundred-megabyte files out of memory.
+    std::fs::copy(source, target)?;
+    hash_file(target)
+}
+
+/// Copy one package file into the staging tree and return the digest of the staged bytes.
+#[cfg(not(target_os = "linux"))]
+fn stage_file(source: &Path, target: &Path) -> std::io::Result<blake3::Hash> {
+    // File copies on these platforms also carry attributes such as quarantine
+    // marks and alternate data streams; staged files must not inherit them.
+    let bytes = std::fs::read(source)?;
+    std::fs::write(target, &bytes)?;
+    Ok(blake3::hash(&bytes))
+}
+
+fn hash_file(path: &Path) -> std::io::Result<blake3::Hash> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_reader(std::fs::File::open(path)?)?;
+    Ok(hasher.finalize())
 }
 
 fn stable_version(value: &str) -> Option<semver::Version> {
