@@ -52,6 +52,49 @@ fn package(root: &Path, version: &str) -> PathBuf {
     bin
 }
 
+#[test]
+fn staging_copies_empty_large_and_read_only_files() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::TempDir::new().expect("temp");
+    let source = temp.path().join("source");
+    let staged = temp.path().join("staged");
+    std::fs::create_dir_all(source.join("nested")).expect("source directory");
+    std::fs::create_dir(&staged).expect("staging directory");
+    // Larger than one hashing buffer, so copying and hashing take several reads.
+    let large = b"0123456789abcdef".repeat(12_500);
+    std::fs::write(source.join("nested/large"), &large).expect("large file");
+    std::fs::write(source.join("empty"), b"").expect("empty file");
+    let read_only = source.join("read-only");
+    std::fs::write(&read_only, b"read-only").expect("read-only file");
+    std::fs::set_permissions(&read_only, std::fs::Permissions::from_mode(0o444))
+        .expect("read-only mode");
+
+    let digest = super::package_tree(&source, Some(&staged), &mut BTreeMap::new()).expect("stage");
+
+    // The tree digest covers every file's bytes and mode.
+    assert_eq!(
+        super::package_tree(&staged, /*destination*/ None, &mut BTreeMap::new()).expect("hash"),
+        digest
+    );
+    assert_eq!(
+        std::fs::read(staged.join("nested/large")).expect("staged large file"),
+        large
+    );
+    assert_eq!(
+        std::fs::read(staged.join("empty")).expect("staged empty file"),
+        Vec::<u8>::new()
+    );
+    assert_eq!(
+        std::fs::metadata(staged.join("read-only"))
+            .expect("staged read-only file")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o444
+    );
+}
+
 #[tokio::test]
 async fn seeds_full_package() {
     let temp = tempfile::TempDir::new().expect("temp");

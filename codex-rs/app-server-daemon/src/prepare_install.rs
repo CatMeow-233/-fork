@@ -539,8 +539,8 @@ fn stage_file(source: &Path, target: &Path) -> std::io::Result<blake3::Hash> {
         .truncate(true)
         .open(target)?;
     std::io::copy(&mut reader, &mut staged)?;
-    // Hash through the same descriptor: the caller applies the source mode
-    // afterwards, and that mode may not allow reopening the file.
+    // Hash what was written through the same descriptor, so nothing depends
+    // on reopening the staged file by path or on the mode it has by then.
     staged.rewind()?;
     let mut hasher = blake3::Hasher::new();
     hasher.update_reader(&staged)?;
@@ -550,8 +550,10 @@ fn stage_file(source: &Path, target: &Path) -> std::io::Result<blake3::Hash> {
 /// Copy one package file into the staging tree and return the digest of the staged bytes.
 #[cfg(not(target_os = "linux"))]
 fn stage_file(source: &Path, target: &Path) -> std::io::Result<blake3::Hash> {
-    // File copies on these platforms also carry attributes such as quarantine
-    // marks and alternate data streams; staged files must not inherit them.
+    // There is no kernel copy for `std::io::copy` to use here, so these
+    // platforms keep the original read and write. `std::fs::copy` is not an
+    // option on any platform: it also copies attributes such as quarantine
+    // marks and alternate data streams, which staged files must not inherit.
     let bytes = std::fs::read(source)?;
     std::fs::write(target, &bytes)?;
     Ok(blake3::hash(&bytes))
