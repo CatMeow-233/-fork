@@ -256,9 +256,10 @@ build:ci-windows-msvc --host_action_env=VCINSTALLDIR
 build:release --compilation_mode=opt
 build:release --@rules_rust//rust/settings:lto=thin
 build:release --@rules_rust//rust/settings:codegen_units=4
-# Match Cargo 1.95 build-tool commands for workspace crates: opt-level=0,
+# Match Cargo 1.95 build-tool commands for most workspace crates: opt-level=0,
 # assertions off, and rustc's non-incremental default of 16 codegen units (not
-# target's 4). Cargo now builds third-party build tools at opt-level 3.
+# target's 4). Cargo now builds third-party build tools, and the build script
+# of codex-cli, at the opt-level of their profile overrides.
 build:release --@rules_rust//rust/settings:extra_exec_rustc_flag=-Copt-level=0
 build:release --@rules_rust//rust/settings:extra_exec_rustc_flag=-Ccodegen-units=16
 build:release --@rules_rust//rust/settings:extra_exec_rustc_flag=-Cdebug-assertions=no

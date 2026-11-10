@@ -40,7 +40,7 @@ def _release_profile_impl(settings, attr):
             "-Copt-level=0",
             "-Cdebug-assertions=no",
         ] if smoke else []),
-        # Cargo release build tools in the workspace use opt-level=0,
+        # Most Cargo release build tools in the workspace use opt-level=0,
         # assertions/checks off, and rustc's default 16 CGUs. Overflow checks
         # follow debug assertions.
         _EXEC_RUSTC_FLAGS: settings[_EXEC_RUSTC_FLAGS] + [

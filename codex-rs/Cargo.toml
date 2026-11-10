@@ -655,11 +655,11 @@ debug = "none"
 strip = "symbols"
 
 [profile.release]
-# Workspace crates are optimized for size; dependencies and the binary crate
-# stay at opt-level 3 through the overrides below. Most of the binary is this
-# workspace's async and serde code, which rustc instantiates again in every
-# crate that drives it unless generics are shared across crates, and rustc only
-# shares them at size-oriented opt-levels.
+# Workspace crates are optimized for size; dependencies and the codex-cli
+# package stay at opt-level 3 through the overrides below. Most of the binary
+# is this workspace's async and serde code, which rustc instantiates again in
+# every crate that drives it unless generics are shared across crates, and
+# rustc does not share them at opt-level 2 or 3.
 opt-level = "s"
 lto = "thin"
 # A release build is what gets run or shipped, so it has no debug info and is
@@ -679,7 +679,12 @@ codegen-units = 4
 # TLS, compression, image codecs) live there, and it is a small share of the
 # binary. Thin LTO finishes optimizing every crate with the settings of the
 # crate that is linked, so this only holds in binaries whose own package is at
-# opt-level 3 too.
+# opt-level 3 too. Of the shipped binaries that is `codex` alone;
+# codex-app-server, codex-exec-server, codex-code-mode-host and the Windows
+# helpers are linked from packages at "s", whose libraries would otherwise
+# lose the size reduction.
+# This override also covers third-party build scripts and proc macros, which
+# Cargo would otherwise build unoptimized.
 [profile.release.package."*"]
 opt-level = 3
 
@@ -689,8 +694,11 @@ opt-level = "s"
 
 # The `codex` binary is linked from this package, and its opt-level is the one
 # thin LTO applies to all code after linking: at "s" the dependencies above lose
-# loop vectorization and unrolling. Workspace library crates keep their
-# size-optimized code either way.
+# loop vectorization and unrolling. Code compiled in the workspace library
+# crates keeps its size-optimized form, but this package no longer reuses their
+# shared generics: it compiles its own copies, at 3, of the async code and
+# generics it drives. That accounts for about 15 MB. A package that holds only
+# `main` would have nothing to copy; this has not been tried.
 # One codegen unit: the binary crate instantiates most of the async call tree,
 # and inlined helpers are otherwise copied into every unit.
 # Cargo does not carry `strip` from the profile into a package that has an
@@ -709,6 +717,11 @@ strip = false
 # The inherited codex-cli override would strip the profiled binary.
 [profile.profiling.package.codex-cli]
 strip = false
+
+# Benchmarks use the release profile. Link the image benchmark from a package
+# at opt-level 3, as `codex` is, so the codecs it measures are fully optimized.
+[profile.bench.package.codex-utils-image]
+opt-level = 3
 
 [profile.ci-test]
 # Reduce binary size to reduce disk pressure.

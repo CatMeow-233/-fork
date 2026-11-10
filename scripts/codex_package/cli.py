@@ -116,7 +116,7 @@ def create_parser() -> argparse.ArgumentParser:
         help=(
             "Strip Unix first-party package binaries: auto strips source-built "
             "release-profile inputs, all also strips other profiles and prebuilt "
-            "inputs, none preserves symbols. "
+            "inputs, none leaves the copies as built. "
             "Original inputs and third-party resources are never modified."
         ),
     )

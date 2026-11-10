@@ -75,7 +75,8 @@ overrides that to archive symbols first.
 The default `--strip auto` also preserves
 development/profiling builds and prebuilt inputs
 byte-for-byte, including signatures. Use `--strip all` to also strip prebuilt
-first-party executable copies, or `--strip none` to keep symbols in every package copy.
+first-party executable copies, or `--strip none` to leave every package copy as it was
+built (release-profile Cargo outputs are already stripped).
 Strip before production signing; `--strip all` is not appropriate for inputs
 whose release signatures must be preserved. Windows MSVC symbols are separate
 PDB files and are not included in the package.
