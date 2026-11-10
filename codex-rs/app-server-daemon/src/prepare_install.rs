@@ -525,11 +525,26 @@ fn package_tree(
 /// Copy one package file into the staging tree and return the digest of the staged bytes.
 #[cfg(target_os = "linux")]
 fn stage_file(source: &Path, target: &Path) -> std::io::Result<blake3::Hash> {
-    // The kernel copy shares extents on copy-on-write filesystems (btrfs, XFS
-    // reflinks), so the daemon's package does not store the executables a second
-    // time, and it keeps multi-hundred-megabyte files out of memory.
-    std::fs::copy(source, target)?;
-    hash_file(target)
+    use std::io::Seek;
+
+    // Copying between two files uses the kernel copy, which keeps
+    // multi-hundred-megabyte executables out of memory. When the package and
+    // CODEX_HOME are on the same copy-on-write filesystem (btrfs, XFS with
+    // reflinks) it shares extents, so the staged copy takes no extra space.
+    let mut reader = std::fs::File::open(source)?;
+    let mut staged = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(target)?;
+    std::io::copy(&mut reader, &mut staged)?;
+    // Hash through the same descriptor: the caller applies the source mode
+    // afterwards, and that mode may not allow reopening the file.
+    staged.rewind()?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_reader(&staged)?;
+    Ok(hasher.finalize())
 }
 
 /// Copy one package file into the staging tree and return the digest of the staged bytes.
