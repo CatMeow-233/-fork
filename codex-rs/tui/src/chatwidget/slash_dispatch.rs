@@ -1159,32 +1159,13 @@ impl ChatWidget {
             pending_pastes,
             ..
         } = queued_message;
-        let UserMessage {
-            text,
-            local_images,
-            remote_image_urls,
-            text_elements,
-            mention_bindings,
-        } = user_message;
-        let Some((name, rest, rest_offset)) = parse_slash_name(&text) else {
-            self.submit_user_message(UserMessage {
-                text,
-                local_images,
-                remote_image_urls,
-                text_elements,
-                mention_bindings,
-            });
+        let Some((name, rest, rest_offset)) = parse_slash_name(&user_message.text) else {
+            self.submit_user_message(user_message);
             return QueueDrain::Stop;
         };
 
         if name.contains('/') {
-            self.submit_user_message(UserMessage {
-                text,
-                local_images,
-                remote_image_urls,
-                text_elements,
-                mention_bindings,
-            });
+            self.submit_user_message(user_message);
             return QueueDrain::Stop;
         }
 
@@ -1215,40 +1196,31 @@ impl ChatWidget {
         }
 
         if !command.supports_inline_args() {
-            self.submit_user_message(UserMessage {
-                text,
-                local_images,
-                remote_image_urls,
-                text_elements,
-                mention_bindings,
-            });
+            self.submit_user_message(user_message);
             return QueueDrain::Stop;
         }
         let SlashCommandItem::Builtin(cmd) = command else {
-            self.submit_user_message(UserMessage {
-                text,
-                local_images,
-                remote_image_urls,
-                text_elements,
-                mention_bindings,
-            });
+            self.submit_user_message(user_message);
             return QueueDrain::Stop;
         };
 
         let trimmed_start = rest.trim_start();
         let leading_trimmed = rest.len().saturating_sub(trimmed_start.len());
         let trimmed_rest = trimmed_start.trim_end();
-        let args_elements =
-            slash_args_elements(trimmed_rest, rest_offset + leading_trimmed, &text_elements);
+        let args_elements = slash_args_elements(
+            trimmed_rest,
+            rest_offset + leading_trimmed,
+            &user_message.text_elements,
+        );
         self.dispatch_prepared_command_with_args(
             cmd,
             PreparedSlashCommandArgs {
                 args: trimmed_rest.to_string(),
                 text_elements: args_elements,
                 pending_pastes,
-                local_images,
-                remote_image_urls,
-                mention_bindings,
+                local_images: user_message.local_images,
+                remote_image_urls: user_message.remote_image_urls,
+                mention_bindings: user_message.mention_bindings,
                 source: SlashCommandDispatchSource::Queued,
             },
         );
