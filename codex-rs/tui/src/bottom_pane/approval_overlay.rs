@@ -954,42 +954,24 @@ pub(crate) fn format_additional_permissions_rule(
         parts.push("network".to_string());
     }
     if let Some(file_system) = additional_permissions.file_system.as_ref() {
-        let reads = format_file_system_entry_paths(
-            file_system
-                .entries
-                .iter()
-                .flatten()
-                .filter(|entry| entry.access == FileSystemAccessMode::Read),
-        );
-        if !reads.is_empty() {
-            parts.push(format!("read {reads}"));
-        }
-        let writes = format_file_system_entry_paths(
-            file_system
-                .entries
-                .iter()
-                .flatten()
-                .filter(|entry| entry.access == FileSystemAccessMode::Write),
-        );
-        if !writes.is_empty() {
-            parts.push(format!("write {writes}"));
-        }
-        let denied_reads = format_file_system_entry_paths(
-            file_system
-                .entries
-                .iter()
-                .flatten()
-                .filter(|entry| entry.access == FileSystemAccessMode::Deny),
-        );
-        if !denied_reads.is_empty() {
-            parts.push(format!("deny read {denied_reads}"));
+        for (access, verb) in [
+            (FileSystemAccessMode::Read, "read"),
+            (FileSystemAccessMode::Write, "write"),
+            (FileSystemAccessMode::Deny, "deny read"),
+        ] {
+            let paths = format_file_system_entry_paths(
+                file_system
+                    .entries
+                    .iter()
+                    .flatten()
+                    .filter(|entry| entry.access == access),
+            );
+            if !paths.is_empty() {
+                parts.push(format!("{verb} {paths}"));
+            }
         }
     }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("; "))
-    }
+    (!parts.is_empty()).then(|| parts.join("; "))
 }
 
 pub(crate) fn format_requested_permissions_rule(
