@@ -156,28 +156,18 @@ fn render_debug_config_lines(
     lines.push("Requirements:".bold().into());
     let mut requirement_lines = Vec::new();
 
-    if let Some(sqlite_home) = requirements.sqlite_home.as_ref() {
-        requirement_lines.push(requirement_line(
-            "sqlite_home",
-            sqlite_home.value.display().to_string(),
-            Some(&sqlite_home.source),
-        ));
-    }
-
-    if let Some(log_dir) = requirements.log_dir.as_ref() {
-        requirement_lines.push(requirement_line(
-            "log_dir",
-            log_dir.value.display().to_string(),
-            Some(&log_dir.source),
-        ));
-    }
-
-    if let Some(model_catalog_json) = requirements.model_catalog_json.as_ref() {
-        requirement_lines.push(requirement_line(
-            "model_catalog_json",
-            model_catalog_json.value.display().to_string(),
-            Some(&model_catalog_json.source),
-        ));
+    for (name, path) in [
+        ("sqlite_home", &requirements.sqlite_home),
+        ("log_dir", &requirements.log_dir),
+        ("model_catalog_json", &requirements.model_catalog_json),
+    ] {
+        if let Some(path) = path {
+            requirement_lines.push(requirement_line(
+                name,
+                path.value.display().to_string(),
+                Some(&path.source),
+            ));
+        }
     }
 
     if let Some(check_for_update_on_startup) = requirements.check_for_update_on_startup.as_ref() {
@@ -207,7 +197,7 @@ fn render_debug_config_lines(
     }
 
     if let Some(policies) = requirements_toml.allowed_approval_policies.as_ref() {
-        let value = join_or_empty(policies.iter().map(ToString::to_string).collect::<Vec<_>>());
+        let value = join_or_empty(policies);
         requirement_lines.push(requirement_line(
             "allowed_approval_policies",
             value,
@@ -216,12 +206,7 @@ fn render_debug_config_lines(
     }
 
     if let Some(reviewers) = requirements_toml.allowed_approvals_reviewers.as_ref() {
-        let value = join_or_empty(
-            reviewers
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
-        );
+        let value = join_or_empty(reviewers);
         requirement_lines.push(requirement_line(
             "allowed_approvals_reviewers",
             value,
@@ -235,8 +220,7 @@ fn render_debug_config_lines(
                 .iter()
                 .copied()
                 .filter(|mode| sandbox_mode_is_effectively_allowed(*mode))
-                .map(format_sandbox_mode_requirement)
-                .collect::<Vec<_>>(),
+                .map(format_sandbox_mode_requirement),
         );
         requirement_lines.push(requirement_line(
             "allowed_sandbox_modes",
@@ -246,13 +230,7 @@ fn render_debug_config_lines(
     }
 
     if let Some(modes) = requirements_toml.allowed_web_search_modes.as_ref() {
-        let normalized = normalize_allowed_web_search_modes(modes);
-        let value = join_or_empty(
-            normalized
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
-        );
+        let value = join_or_empty(normalize_allowed_web_search_modes(modes));
         requirement_lines.push(requirement_line(
             "allowed_web_search_modes",
             value,
@@ -307,8 +285,7 @@ fn render_debug_config_lines(
                 .value
                 .entries
                 .iter()
-                .map(|(feature, enabled)| format!("{feature}={enabled}"))
-                .collect::<Vec<_>>(),
+                .map(|(feature, enabled)| format!("{feature}={enabled}")),
         );
         requirement_lines.push(requirement_line(
             "features",
@@ -329,7 +306,7 @@ fn render_debug_config_lines(
     }
 
     if let Some(servers) = requirements_toml.mcp_servers.as_ref() {
-        let value = join_or_empty(servers.keys().cloned().collect::<Vec<_>>());
+        let value = join_or_empty(servers.keys());
         requirement_lines.push(requirement_line(
             "mcp_servers",
             value,
@@ -381,8 +358,7 @@ fn render_debug_config_lines(
                 .value
                 .deny_read
                 .iter()
-                .map(|pattern| pattern.as_str().to_string())
-                .collect::<Vec<_>>(),
+                .map(|pattern| pattern.as_str().to_string()),
         );
         requirement_lines.push(requirement_line(
             "permissions.filesystem.deny_read",
@@ -519,7 +495,11 @@ fn requirement_line(
     format!("  - {name}: {value} (source: {source})").into()
 }
 
-fn join_or_empty(values: Vec<String>) -> String {
+fn join_or_empty(values: impl IntoIterator<Item = impl ToString>) -> String {
+    let values = values
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
     if values.is_empty() {
         "<empty>".to_string()
     } else {
