@@ -101,14 +101,8 @@ pub(crate) async fn current_branch_name(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
 ) -> Option<String> {
-    let output = run_git_command(runner, cwd, &["branch", "--show-current"])
-        .await
-        .ok()?;
-    if !output.success() {
-        return None;
-    }
-
-    Some(output.stdout.trim().to_string()).filter(|name| !name.is_empty())
+    let output = git_stdout(runner, cwd, &["branch", "--show-current"]).await?;
+    Some(output.trim().to_string()).filter(|name| !name.is_empty())
 }
 
 /// Resolves PR and branch-change metadata for one status-line working directory.
@@ -139,40 +133,26 @@ async fn branch_diff_stats_to_default_branch(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
 ) -> Option<GitBranchDiffStats> {
-    let git_dir = run_git_command(runner, cwd, &["rev-parse", "--git-dir"])
-        .await
-        .ok()?;
-    if !git_dir.success() {
-        return None;
-    }
+    git_stdout(runner, cwd, &["rev-parse", "--git-dir"]).await?;
 
     let default_branch = get_default_branch(runner, cwd).await?;
-    let merge_base = run_git_command(
+    let merge_base = git_stdout(
         runner,
         cwd,
         &["merge-base", "HEAD", &default_branch.merge_ref],
     )
-    .await
-    .ok()?;
-    if !merge_base.success() {
-        return None;
-    }
-    let merge_base = merge_base.stdout.trim();
+    .await?;
+    let merge_base = merge_base.trim();
     if merge_base.is_empty() {
         return None;
     }
 
     let range = format!("{merge_base}..HEAD");
-    let numstat = run_git_command(runner, cwd, &["diff", "--numstat", &range])
-        .await
-        .ok()?;
-    if !numstat.success() {
-        return None;
-    }
+    let numstat = git_stdout(runner, cwd, &["diff", "--numstat", &range]).await?;
 
     let mut additions = 0_u64;
     let mut deletions = 0_u64;
-    for line in numstat.stdout.lines() {
+    for line in numstat.lines() {
         let mut columns = line.split('\t');
         additions += columns
             .next()
@@ -196,12 +176,8 @@ async fn branch_diff_stats_to_default_branch(
 /// remotes are still tried so fork or enterprise layouts with a differently named upstream can
 /// produce branch-change stats when their remote HEAD is configured.
 async fn get_git_remotes(runner: &dyn WorkspaceCommandExecutor, cwd: &Path) -> Option<Vec<String>> {
-    let output = run_git_command(runner, cwd, &["remote"]).await.ok()?;
-    if !output.success() {
-        return None;
-    }
-
-    let mut remotes: Vec<String> = output.stdout.lines().map(str::to_string).collect();
+    let output = git_stdout(runner, cwd, &["remote"]).await?;
+    let mut remotes: Vec<String> = output.lines().map(str::to_string).collect();
     if let Some(pos) = remotes.iter().position(|remote| remote == "origin") {
         let origin = remotes.remove(pos);
         remotes.insert(0, origin);
@@ -246,14 +222,8 @@ async fn get_remote_default_branch_from_symbolic_ref(
     remote: &str,
 ) -> Option<DefaultBranch> {
     let remote_head = format!("refs/remotes/{remote}/HEAD");
-    let output = run_git_command(runner, cwd, &["symbolic-ref", "--quiet", &remote_head])
-        .await
-        .ok()?;
-    if !output.success() {
-        return None;
-    }
-
-    let trimmed = output.stdout.trim();
+    let output = git_stdout(runner, cwd, &["symbolic-ref", "--quiet", &remote_head]).await?;
+    let trimmed = output.trim();
     let remote_ref_prefix = format!("refs/remotes/{remote}/");
     trimmed.strip_prefix(&remote_ref_prefix)?;
     if !git_ref_exists(runner, cwd, trimmed).await {
@@ -275,14 +245,8 @@ async fn get_remote_default_branch_from_remote_show(
     cwd: &Path,
     remote: &str,
 ) -> Option<DefaultBranch> {
-    let output = run_git_command(runner, cwd, &["remote", "show", remote])
-        .await
-        .ok()?;
-    if !output.success() {
-        return None;
-    }
-
-    for line in output.stdout.lines() {
+    let output = git_stdout(runner, cwd, &["remote", "show", remote]).await?;
+    for line in output.lines() {
         let line = line.trim();
         let Some(rest) = line.strip_prefix("HEAD branch:") else {
             continue;
@@ -352,13 +316,8 @@ async fn open_pull_request_for_current_branch(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
 ) -> Option<StatusLinePullRequest> {
-    let output = run_gh_command(runner, cwd, &["pr", "view", "--json", "number,url,state"])
-        .await
-        .ok()?;
-    if !output.success() {
-        return None;
-    }
-    pull_request_from_view_output(&output.stdout)
+    let output = gh_stdout(runner, cwd, &["pr", "view", "--json", "number,url,state"]).await?;
+    pull_request_from_view_output(&output)
 }
 
 /// Looks up open PRs for `HEAD` across the upstream/fork repository search order.
@@ -393,14 +352,8 @@ async fn open_pull_request_for_head_commit(
 
 /// Returns the current `HEAD` SHA for commit-based PR lookup.
 async fn current_head_sha(runner: &dyn WorkspaceCommandExecutor, cwd: &Path) -> Option<String> {
-    let output = run_git_command(runner, cwd, &["rev-parse", "HEAD"])
-        .await
-        .ok()?;
-    if !output.success() {
-        return None;
-    }
-
-    Some(output.stdout.trim().to_string()).filter(|sha| !sha.is_empty())
+    let output = git_stdout(runner, cwd, &["rev-parse", "HEAD"]).await?;
+    Some(output.trim().to_string()).filter(|sha| !sha.is_empty())
 }
 
 /// Returns repositories to query for commit-associated PRs, with parent before fork.
@@ -408,18 +361,13 @@ async fn gh_repo_search_order(
     runner: &dyn WorkspaceCommandExecutor,
     cwd: &Path,
 ) -> Option<Vec<String>> {
-    let output = run_gh_command(
+    let output = gh_stdout(
         runner,
         cwd,
         &["repo", "view", "--json", "nameWithOwner,parent"],
     )
-    .await
-    .ok()?;
-    if !output.success() {
-        return None;
-    }
-
-    repo_search_order_from_output(&output.stdout)
+    .await?;
+    repo_search_order_from_output(&output)
 }
 
 /// Parses `gh pr view --json number,url,state` output for an open PR.
@@ -466,6 +414,27 @@ fn repo_search_order_from_output(stdout: &str) -> Option<Vec<String>> {
     }
 
     Some(repos)
+}
+
+/// Runs a git probe and returns its stdout, or `None` if it failed to run or exited non-zero.
+async fn git_stdout(
+    runner: &dyn WorkspaceCommandExecutor,
+    cwd: &Path,
+    args: &[&str],
+) -> Option<String> {
+    let output = run_git_command(runner, cwd, args).await.ok()?;
+    output.success().then_some(output.stdout)
+}
+
+/// Runs a GitHub CLI probe and returns its stdout, or `None` if it failed to run or exited
+/// non-zero.
+async fn gh_stdout(
+    runner: &dyn WorkspaceCommandExecutor,
+    cwd: &Path,
+    args: &[&str],
+) -> Option<String> {
+    let output = run_gh_command(runner, cwd, args).await.ok()?;
+    output.success().then_some(output.stdout)
 }
 
 /// Runs a git command through the workspace-command abstraction.
