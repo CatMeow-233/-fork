@@ -84,44 +84,36 @@ impl StreamingRender {
         self.pending_math_start = None;
         self.mutable_fence_start = None;
         self.completed_source_len = 0;
+        self.has_reference_link_definition = false;
         self.has_inline_visualization_directive = contains_inline_visualization(source);
-        self.lines = match (render_mode, inline_visualization_context) {
-            (HistoryRenderMode::Rich, None) if !self.has_inline_visualization_directive => {
-                let rendered = render_streaming_markdown_agent_with_links_and_cwd(
-                    source,
-                    width,
-                    Some(cwd),
-                    self.list_spacing,
-                );
-                self.has_reference_link_definition = rendered.has_reference_link_definition;
-                self.completed_source_len = rendered.last_top_level_block_start.unwrap_or(0);
-                self.pending_math_start = rendered.pending_math_start;
-                self.mutable_fence_start = rendered.mutable_fence_start;
-                rendered.lines
-            }
-            _ => {
-                self.has_reference_link_definition = false;
-                if render_mode == HistoryRenderMode::Rich {
-                    let rendered = render_streaming_markdown_agent_with_links_and_cwd(
-                        source,
-                        width,
-                        Some(cwd),
-                        self.list_spacing,
-                    );
-                    self.has_reference_link_definition = rendered.has_reference_link_definition;
-                    self.completed_source_len = rendered.last_top_level_block_start.unwrap_or(0);
-                    self.pending_math_start = rendered.pending_math_start;
-                    self.mutable_fence_start = rendered.mutable_fence_start;
-                }
-                render_source_with_list_spacing(
-                    source,
-                    width,
-                    cwd,
-                    render_mode,
-                    inline_visualization_context,
-                    self.list_spacing,
-                )
-            }
+        // Rich mode always renders incrementally for the streaming metadata; its lines are used
+        // only when nothing calls for the canonical full render.
+        let streamed = (render_mode == HistoryRenderMode::Rich).then(|| {
+            render_streaming_markdown_agent_with_links_and_cwd(
+                source,
+                width,
+                Some(cwd),
+                self.list_spacing,
+            )
+        });
+        if let Some(rendered) = &streamed {
+            self.has_reference_link_definition = rendered.has_reference_link_definition;
+            self.completed_source_len = rendered.last_top_level_block_start.unwrap_or(0);
+            self.pending_math_start = rendered.pending_math_start;
+            self.mutable_fence_start = rendered.mutable_fence_start;
+        }
+        let plain_markdown =
+            inline_visualization_context.is_none() && !self.has_inline_visualization_directive;
+        self.lines = match streamed {
+            Some(rendered) if plain_markdown => rendered.lines,
+            _ => render_source_with_list_spacing(
+                source,
+                width,
+                cwd,
+                render_mode,
+                inline_visualization_context,
+                self.list_spacing,
+            ),
         };
         self.stable_source_len = 0;
         self.stable_rendered_len = 0;
@@ -151,18 +143,7 @@ impl StreamingRender {
         }
 
         self.has_inline_visualization_directive |= contains_inline_visualization(committed_source);
-        if self.has_inline_visualization_directive {
-            self.recompute(
-                raw_source,
-                width,
-                cwd,
-                render_mode,
-                inline_visualization_context,
-            );
-            return;
-        }
-
-        if self.has_reference_link_definition {
+        if self.has_inline_visualization_directive || self.has_reference_link_definition {
             self.recompute(
                 raw_source,
                 width,
