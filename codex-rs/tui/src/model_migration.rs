@@ -2,13 +2,12 @@
 //! Mandatory and optional migration outcomes retain their existing keyboard policy.
 
 use crate::bottom_pane::picker_option_list;
-use crate::bottom_pane::render_menu_surface;
+use crate::bottom_pane::render_menu_panel;
 use crate::key_hint;
 use crate::markdown_render::render_markdown_text_with_width;
 use crate::render::Insets;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::FlexRenderable;
-use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableExt as _;
 use crate::render::renderable::RenderableItem;
 use crate::tui::FrameRequester;
@@ -18,12 +17,9 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
-use ratatui::layout::Rect;
 use ratatui::prelude::Stylize as _;
-use ratatui::prelude::Widget;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
@@ -258,8 +254,6 @@ impl ModelMigrationScreen {
 
 impl WidgetRef for &ModelMigrationScreen {
     fn render_ref(&self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
-        Clear.render(area, buf);
-
         let mut body = ColumnRenderable::new();
         if let Some(markdown) = self.copy.markdown.as_ref() {
             self.render_markdown_content(markdown, area.width, &mut body);
@@ -310,12 +304,7 @@ impl WidgetRef for &ModelMigrationScreen {
                 .inset(Insets::vh(/*v*/ 0, /*h*/ 2)),
         );
         column.push(/*flex*/ 1, RenderableItem::Borrowed(&""));
-        let panel = Rect {
-            height: column.desired_height(area.width).min(area.height),
-            ..area
-        };
-        render_menu_surface(panel, buf);
-        column.render(panel, buf);
+        render_menu_panel(&column, area, buf);
     }
 }
 

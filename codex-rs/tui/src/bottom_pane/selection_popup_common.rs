@@ -8,6 +8,7 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Block;
+use ratatui::widgets::Clear;
 use ratatui::widgets::Widget;
 
 use crate::key_hint::ShortcutHint;
@@ -119,6 +120,21 @@ pub(crate) fn render_menu_surface(area: Rect, buf: &mut Buffer) -> Rect {
         .style(user_message_style())
         .render(area, buf);
     menu_surface_inset(area)
+}
+
+/// Clear `area`, then draw `content` on a menu surface fitted to its desired height.
+pub(crate) fn render_menu_panel(
+    content: &impl crate::render::renderable::Renderable,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    Clear.render(area, buf);
+    let panel = Rect {
+        height: content.desired_height(area.width).min(area.height),
+        ..area
+    };
+    render_menu_surface(panel, buf);
+    content.render(panel, buf);
 }
 
 /// Wrap a styled line while preserving span styles.

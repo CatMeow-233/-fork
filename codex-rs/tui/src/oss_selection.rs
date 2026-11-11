@@ -5,13 +5,12 @@ use std::io;
 use std::sync::LazyLock;
 
 use crate::bottom_pane::picker_option_list;
-use crate::bottom_pane::render_menu_surface;
+use crate::bottom_pane::render_menu_panel;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
 use crate::render::Insets;
 use crate::render::renderable::FlexRenderable;
-use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableExt as _;
 use crate::render::renderable::RenderableItem;
 use codex_http_client::HttpClient;
@@ -38,9 +37,7 @@ use ratatui::layout::Rect;
 use ratatui::prelude::*;
 use ratatui::style::Color;
 use ratatui::text::Line;
-use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
-use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 use std::time::Duration;
@@ -205,7 +202,6 @@ impl OssSelectionWidget<'_> {
 
 impl WidgetRef for &OssSelectionWidget<'_> {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        Clear.render(area, buf);
         let mut column = FlexRenderable::new();
         column.push(/*flex*/ 1, RenderableItem::Borrowed(&""));
         column.push(
@@ -262,12 +258,7 @@ impl WidgetRef for &OssSelectionWidget<'_> {
             .inset(Insets::vh(/*v*/ 0, /*h*/ 2)),
         );
         column.push(/*flex*/ 1, RenderableItem::Borrowed(&""));
-        let panel = Rect {
-            height: column.desired_height(area.width).min(area.height),
-            ..area
-        };
-        render_menu_surface(panel, buf);
-        column.render(panel, buf);
+        render_menu_panel(&column, area, buf);
     }
 }
 

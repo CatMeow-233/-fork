@@ -1,7 +1,7 @@
 //! Archived-session recovery with shared picker rows and scoped terminal ownership.
 
 use crate::bottom_pane::picker_option_list;
-use crate::bottom_pane::render_menu_surface;
+use crate::bottom_pane::render_menu_panel;
 use crate::key_hint;
 use crate::render::Insets;
 use crate::render::renderable::FlexRenderable;
@@ -21,9 +21,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize as _;
 use ratatui::text::Line;
-use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
-use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
 use tokio_stream::StreamExt;
@@ -211,14 +209,7 @@ impl UnarchivePrompt {
 
 impl WidgetRef for &UnarchivePrompt {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        Clear.render(area, buf);
-        let content = self.content();
-        let panel = Rect {
-            height: content.desired_height(area.width).min(area.height),
-            ..area
-        };
-        render_menu_surface(panel, buf);
-        content.render(panel, buf);
+        render_menu_panel(&self.content(), area, buf);
     }
 }
 

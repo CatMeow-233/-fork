@@ -4,13 +4,12 @@
 #![cfg(any(not(debug_assertions), test))]
 
 use crate::bottom_pane::picker_option_list;
-use crate::bottom_pane::render_menu_surface;
+use crate::bottom_pane::render_menu_panel;
 use crate::key_hint;
 #[cfg(not(debug_assertions))]
 use crate::legacy_core::config::Config;
 use crate::render::Insets;
 use crate::render::renderable::FlexRenderable;
-use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableExt as _;
 use crate::render::renderable::RenderableItem;
 use crate::tui::FrameRequester;
@@ -29,10 +28,8 @@ use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::prelude::Widget;
 use ratatui::style::Stylize as _;
 use ratatui::text::Line;
-use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 use ratatui::widgets::Wrap;
@@ -202,7 +199,6 @@ impl UpdateSelection {
 
 impl WidgetRef for &UpdatePromptScreen {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
-        Clear.render(area, buf);
         let mut column = FlexRenderable::new();
 
         let update_command = self.update_action.command_str();
@@ -260,12 +256,7 @@ impl WidgetRef for &UpdatePromptScreen {
             .inset(Insets::vh(/*v*/ 0, /*h*/ 2)),
         );
         column.push(/*flex*/ 1, RenderableItem::Borrowed(&""));
-        let panel = Rect {
-            height: column.desired_height(area.width).min(area.height),
-            ..area
-        };
-        render_menu_surface(panel, buf);
-        column.render(panel, buf);
+        render_menu_panel(&column, area, buf);
         crate::terminal_hyperlinks::mark_underlined_hyperlink(buf, area, RELEASE_NOTES_URL);
     }
 }
