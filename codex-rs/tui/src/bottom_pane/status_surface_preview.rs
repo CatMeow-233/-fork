@@ -2,11 +2,13 @@ use std::collections::BTreeMap;
 
 use super::footer_content::FooterContent;
 use codex_protocol::ThreadId;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 use super::status_line_from_segments;
 use super::status_line_setup::StatusLineItem;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(EnumIter, Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum StatusSurfacePreviewItem {
     AppName,
     ProjectName,
@@ -84,47 +86,6 @@ impl StatusSurfacePreviewItem {
             StatusSurfacePreviewItem::Provider => "provider: <id>",
             StatusSurfacePreviewItem::TaskProgress => "Tasks 0/0",
         }
-    }
-
-    pub(crate) fn iter() -> impl Iterator<Item = Self> {
-        [
-            Self::AppName,
-            Self::ProjectName,
-            Self::ProjectRoot,
-            Self::CurrentDir,
-            Self::Hostname,
-            Self::Status,
-            Self::ThreadName,
-            Self::ThreadTitle,
-            Self::GitBranch,
-            Self::PullRequestNumber,
-            Self::BranchChanges,
-            Self::Permissions,
-            Self::ApprovalMode,
-            Self::ContextRemaining,
-            Self::ContextUsed,
-            Self::FiveHourLimit,
-            Self::WeeklyLimit,
-            Self::CodexVersion,
-            Self::ContextWindowSize,
-            Self::UsedTokens,
-            Self::TotalInputTokens,
-            Self::TotalOutputTokens,
-            Self::ThreadCredits,
-            Self::EstimatedThreadCost,
-            Self::SessionId,
-            Self::FastMode,
-            Self::Daybreak,
-            Self::RawOutput,
-            Self::WorkspaceHeadline,
-            Self::Model,
-            Self::ModelWithReasoning,
-            Self::Reasoning,
-            Self::Profile,
-            Self::Provider,
-            Self::TaskProgress,
-        ]
-        .into_iter()
     }
 }
 
