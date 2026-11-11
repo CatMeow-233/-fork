@@ -100,65 +100,44 @@ impl ChatWidget {
                 /*profile_selection*/ None,
                 /*return_to_permissions*/ !include_read_only,
             );
-            if preset.id == "auto" {
+            let preset_matches = Self::preset_matches_current(
+                current_approval,
+                &current_permission_profile,
+                self.config.cwd.as_path(),
+                &preset,
+            );
+            items.push(SelectionItem {
+                name: base_name,
+                description: base_description,
+                is_current: preset_matches
+                    && (preset.id != "auto" || current_review_policy == ApprovalsReviewer::User),
+                actions: default_actions,
+                dismiss_on_select: true,
+                disabled_reason: default_disabled_reason,
+                ..Default::default()
+            });
+            if preset.id == "auto" && guardian_approval_enabled {
                 items.push(SelectionItem {
-                    name: base_name.clone(),
-                    description: base_description.clone(),
-                    is_current: current_review_policy == ApprovalsReviewer::User
-                        && Self::preset_matches_current(
-                            current_approval,
-                            &current_permission_profile,
-                            self.config.cwd.as_path(),
-                            &preset,
-                        ),
-                    actions: default_actions,
-                    dismiss_on_select: true,
-                    disabled_reason: default_disabled_reason,
-                    ..Default::default()
-                });
-
-                if guardian_approval_enabled {
-                    items.push(SelectionItem {
-                        name: APPROVE_FOR_ME_LABEL.to_string(),
-                        description: Some(AUTO_REVIEW_DESCRIPTION.to_string()),
-                        is_current: current_review_policy == ApprovalsReviewer::AutoReview
-                            && (Self::preset_matches_current(
-                                current_approval,
-                                &current_permission_profile,
-                                self.config.cwd.as_path(),
-                                &preset,
-                            ) || (current_approval == AskForApproval::OnRequest
+                    name: APPROVE_FOR_ME_LABEL.to_string(),
+                    description: Some(AUTO_REVIEW_DESCRIPTION.to_string()),
+                    is_current: current_review_policy == ApprovalsReviewer::AutoReview
+                        && (preset_matches
+                            || (current_approval == AskForApproval::OnRequest
                                 && self
                                     .config
                                     .config_layer_stack
                                     .requirements()
                                     .auto_review_required_for_model(self.current_model()))),
-                        actions: self.permission_mode_actions(
-                            &preset,
-                            APPROVE_FOR_ME_LABEL.to_string(),
-                            ApprovalsReviewer::AutoReview,
-                            /*profile_selection*/ None,
-                            /*return_to_permissions*/ !include_read_only,
-                        ),
-                        dismiss_on_select: true,
-                        disabled_reason: approval_disabled_reason
-                            .or_else(|| guardian_disabled_reason(true)),
-                        ..Default::default()
-                    });
-                }
-            } else {
-                items.push(SelectionItem {
-                    name: base_name,
-                    description: base_description,
-                    is_current: Self::preset_matches_current(
-                        current_approval,
-                        &current_permission_profile,
-                        self.config.cwd.as_path(),
+                    actions: self.permission_mode_actions(
                         &preset,
+                        APPROVE_FOR_ME_LABEL.to_string(),
+                        ApprovalsReviewer::AutoReview,
+                        /*profile_selection*/ None,
+                        /*return_to_permissions*/ !include_read_only,
                     ),
-                    actions: default_actions,
                     dismiss_on_select: true,
-                    disabled_reason: default_disabled_reason,
+                    disabled_reason: approval_disabled_reason
+                        .or_else(|| guardian_disabled_reason(true)),
                     ..Default::default()
                 });
             }
