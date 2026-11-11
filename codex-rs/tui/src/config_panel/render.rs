@@ -124,37 +124,17 @@ pub(crate) fn notification_condition(
 ) -> SelectionViewParams {
     use codex_config::types::NotificationCondition;
 
-    let current = tui.notification_settings.condition;
-    let conditions = [
-        ("Unfocused", NotificationCondition::Unfocused),
-        ("Always", NotificationCondition::Always),
-    ];
-    SelectionViewParams {
-        title: Some("Notify when".to_string()),
-        subtitle: Some(
-            "Notify only while you are away or while this terminal is focused too".to_string(),
-        ),
-        footer_hint: Some(picker_hint_line_for_keymap(keymap)),
-        initial_selected_idx: conditions
-            .iter()
-            .position(|(_, condition)| *condition == current),
-        allow_input_when_disconnected: true,
-        items: conditions
-            .into_iter()
-            .map(|(label, condition)| SelectionItem {
-                name: label.to_string(),
-                is_current: condition == current,
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::SaveConfigPreference(
-                        ConfigPreference::NotificationCondition(condition),
-                    ));
-                })],
-                dismiss_on_select: true,
-                ..Default::default()
-            })
-            .collect(),
-        ..SelectionViewParams::picker()
-    }
+    preference_picker(
+        "Notify when",
+        "Notify only while you are away or while this terminal is focused too",
+        keymap,
+        tui.notification_settings.condition,
+        [
+            ("Unfocused", NotificationCondition::Unfocused),
+            ("Always", NotificationCondition::Always),
+        ],
+        ConfigPreference::NotificationCondition,
+    )
 }
 
 pub(crate) fn copy_on_select(
@@ -163,37 +143,18 @@ pub(crate) fn copy_on_select(
 ) -> SelectionViewParams {
     use codex_config::types::CopyOnSelect;
 
-    let current = tui.copy_on_select;
-    let modes = [
-        ("Auto (default)", CopyOnSelect::Auto),
-        ("On", CopyOnSelect::Always),
-        ("Off", CopyOnSelect::Never),
-    ];
-    SelectionViewParams {
-        title: Some("Copy on select".to_string()),
-        subtitle: Some(
-            "Copy transcript, footer, and composer selections on release; Auto follows terminal defaults"
-                .to_string(),
-        ),
-        footer_hint: Some(picker_hint_line_for_keymap(keymap)),
-        initial_selected_idx: modes.iter().position(|(_, mode)| *mode == current),
-        allow_input_when_disconnected: true,
-        items: modes
-            .into_iter()
-            .map(|(label, mode)| SelectionItem {
-                name: label.to_string(),
-                is_current: mode == current,
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::SaveConfigPreference(
-                        ConfigPreference::CopyOnSelect(mode),
-                    ));
-                })],
-                dismiss_on_select: true,
-                ..Default::default()
-            })
-            .collect(),
-        ..SelectionViewParams::picker()
-    }
+    preference_picker(
+        "Copy on select",
+        "Copy transcript, footer, and composer selections on release; Auto follows terminal defaults",
+        keymap,
+        tui.copy_on_select,
+        [
+            ("Auto (default)", CopyOnSelect::Auto),
+            ("On", CopyOnSelect::Always),
+            ("Off", CopyOnSelect::Never),
+        ],
+        ConfigPreference::CopyOnSelect,
+    )
 }
 
 pub(crate) fn right_click_paste(
@@ -202,34 +163,18 @@ pub(crate) fn right_click_paste(
 ) -> SelectionViewParams {
     use codex_config::types::RightClickPaste;
 
-    let current = tui.right_click_paste;
-    let modes = [
-        ("Auto (default)", RightClickPaste::Auto),
-        ("On", RightClickPaste::On),
-        ("Off", RightClickPaste::Off),
-    ];
-    SelectionViewParams {
-        title: Some("Right-click paste".to_string()),
-        subtitle: Some(super::RIGHT_CLICK_PASTE_DESCRIPTION.to_string()),
-        footer_hint: Some(picker_hint_line_for_keymap(keymap)),
-        initial_selected_idx: modes.iter().position(|(_, mode)| *mode == current),
-        allow_input_when_disconnected: true,
-        items: modes
-            .into_iter()
-            .map(|(label, mode)| SelectionItem {
-                name: label.to_string(),
-                is_current: mode == current,
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::SaveConfigPreference(
-                        ConfigPreference::RightClickPaste(mode),
-                    ));
-                })],
-                dismiss_on_select: true,
-                ..Default::default()
-            })
-            .collect(),
-        ..SelectionViewParams::picker()
-    }
+    preference_picker(
+        "Right-click paste",
+        super::RIGHT_CLICK_PASTE_DESCRIPTION,
+        keymap,
+        tui.right_click_paste,
+        [
+            ("Auto (default)", RightClickPaste::Auto),
+            ("On", RightClickPaste::On),
+            ("Off", RightClickPaste::Off),
+        ],
+        ConfigPreference::RightClickPaste,
+    )
 }
 
 pub(crate) fn session_picker_layout(
@@ -238,36 +183,17 @@ pub(crate) fn session_picker_layout(
 ) -> SelectionViewParams {
     use codex_config::types::SessionPickerViewMode;
 
-    let current = tui.session_picker_view.unwrap_or_default();
-    let modes = [
-        ("Dense", SessionPickerViewMode::Dense),
-        ("Comfortable", SessionPickerViewMode::Comfortable),
-    ];
-    SelectionViewParams {
-        title: Some("Session picker layout".to_string()),
-        subtitle: Some(
-            "Choose tighter rows or a roomier list when resuming and forking conversations"
-                .to_string(),
-        ),
-        footer_hint: Some(picker_hint_line_for_keymap(keymap)),
-        initial_selected_idx: modes.iter().position(|(_, mode)| *mode == current),
-        allow_input_when_disconnected: true,
-        items: modes
-            .into_iter()
-            .map(|(label, mode)| SelectionItem {
-                name: label.to_string(),
-                is_current: mode == current,
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::SaveConfigPreference(
-                        ConfigPreference::SessionPickerLayout(mode),
-                    ));
-                })],
-                dismiss_on_select: true,
-                ..Default::default()
-            })
-            .collect(),
-        ..SelectionViewParams::picker()
-    }
+    preference_picker(
+        "Session picker layout",
+        "Choose tighter rows or a roomier list when resuming and forking conversations",
+        keymap,
+        tui.session_picker_view.unwrap_or_default(),
+        [
+            ("Dense", SessionPickerViewMode::Dense),
+            ("Comfortable", SessionPickerViewMode::Comfortable),
+        ],
+        ConfigPreference::SessionPickerLayout,
+    )
 }
 
 pub(crate) fn resume_directory(
@@ -277,40 +203,54 @@ pub(crate) fn resume_directory(
 ) -> SelectionViewParams {
     use codex_config::types::ResumeCwdMode;
 
-    let current = tui.resume_cwd;
     let modes = [
         ("Ask", None),
         ("Current directory", Some(ResumeCwdMode::Current)),
         ("Session directory", Some(ResumeCwdMode::Session)),
     ];
+    let mut params = preference_picker(
+        "Resume directory",
+        "Choose the working directory when resuming, with --cd taking precedence for this session",
+        keymap,
+        tui.resume_cwd,
+        modes,
+        ConfigPreference::ResumeDirectory,
+    );
+    if matches!(
+        current_availability,
+        ResumeCurrentAvailability::RequiresCwdOverride
+    ) {
+        for (item, (_, mode)) in params.items.iter_mut().zip(modes) {
+            if mode == Some(ResumeCwdMode::Current) {
+                item.disabled_reason = Some("Requires --cd for remote sessions".to_string());
+            }
+        }
+    }
+    params
+}
+
+/// A single-choice picker that saves the chosen value as a config preference.
+fn preference_picker<T: Copy + PartialEq + Send + Sync + 'static, const N: usize>(
+    title: &str,
+    subtitle: &str,
+    keymap: &ListKeymap,
+    current: T,
+    choices: [(&str, T); N],
+    preference: fn(T) -> ConfigPreference,
+) -> SelectionViewParams {
     SelectionViewParams {
-        title: Some("Resume directory".to_string()),
-        subtitle: Some(
-            "Choose the working directory when resuming, with --cd taking precedence for this session"
-                .to_string(),
-        ),
+        title: Some(title.to_string()),
+        subtitle: Some(subtitle.to_string()),
         footer_hint: Some(picker_hint_line_for_keymap(keymap)),
-        initial_selected_idx: modes.iter().position(|(_, mode)| *mode == current),
+        initial_selected_idx: choices.iter().position(|(_, value)| *value == current),
         allow_input_when_disconnected: true,
-        items: modes
+        items: choices
             .into_iter()
-            .map(|(label, mode)| SelectionItem {
+            .map(|(label, value)| SelectionItem {
                 name: label.to_string(),
-                is_current: mode == current,
-                disabled_reason: if mode == Some(ResumeCwdMode::Current)
-                    && matches!(
-                        current_availability,
-                        ResumeCurrentAvailability::RequiresCwdOverride
-                    )
-                {
-                    Some("Requires --cd for remote sessions".to_string())
-                } else {
-                    None
-                },
+                is_current: value == current,
                 actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::SaveConfigPreference(
-                        ConfigPreference::ResumeDirectory(mode),
-                    ));
+                    tx.send(AppEvent::SaveConfigPreference(preference(value)));
                 })],
                 dismiss_on_select: true,
                 ..Default::default()
