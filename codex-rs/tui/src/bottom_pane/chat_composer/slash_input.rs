@@ -550,7 +550,7 @@ pub(super) fn prepared_args(prepared_text: &str) -> Option<(&str, usize)> {
 /// Translate full-text element ranges into command-argument ranges.
 ///
 /// `rest_offset` is the byte offset where `rest` begins in the full text.
-pub(super) fn args_elements(
+pub(crate) fn args_elements(
     rest: &str,
     rest_offset: usize,
     text_elements: &[TextElement],
