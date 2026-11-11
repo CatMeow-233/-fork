@@ -2803,79 +2803,21 @@ fn thread_cwd_from_config(
     }
 }
 
+fn started_thread(session: ThreadSessionState, thread: Thread) -> AppServerStartedThread {
+    AppServerStartedThread {
+        blocks_direct_input: thread_blocks_direct_input(&thread),
+        session,
+        turns: thread.turns,
+        task_tools_available: false,
+    }
+}
+
 async fn started_thread_from_start_response(
     response: ThreadStartResponse,
     local_settings: &LocalSettings,
     config: &Config,
     thread_params_mode: ThreadParamsMode,
 ) -> Result<AppServerStartedThread> {
-    let blocks_direct_input = thread_blocks_direct_input(&response.thread);
-    let session = thread_session_state_from_thread_start_response(
-        &response,
-        local_settings,
-        config,
-        thread_params_mode,
-    )
-    .await
-    .map_err(color_eyre::eyre::Report::msg)?;
-    Ok(AppServerStartedThread {
-        session,
-        turns: response.thread.turns,
-        blocks_direct_input,
-        task_tools_available: false,
-    })
-}
-
-async fn started_thread_from_resume_response(
-    response: ThreadResumeResponse,
-    local_settings: &LocalSettings,
-    thread_params_mode: ThreadParamsMode,
-) -> Result<AppServerStartedThread> {
-    let blocks_direct_input = thread_blocks_direct_input(&response.thread);
-    let session = thread_session_state_from_thread_resume_response(
-        &response,
-        local_settings,
-        thread_params_mode,
-    )
-    .await
-    .map_err(color_eyre::eyre::Report::msg)?;
-    Ok(AppServerStartedThread {
-        session,
-        turns: response.thread.turns,
-        blocks_direct_input,
-        task_tools_available: false,
-    })
-}
-
-async fn started_thread_from_fork_response(
-    response: ThreadForkResponse,
-    local_settings: &LocalSettings,
-    config: &Config,
-    thread_params_mode: ThreadParamsMode,
-) -> Result<AppServerStartedThread> {
-    let blocks_direct_input = thread_blocks_direct_input(&response.thread);
-    let session = thread_session_state_from_thread_fork_response(
-        &response,
-        local_settings,
-        config,
-        thread_params_mode,
-    )
-    .await
-    .map_err(color_eyre::eyre::Report::msg)?;
-    Ok(AppServerStartedThread {
-        session,
-        turns: response.thread.turns,
-        blocks_direct_input,
-        task_tools_available: false,
-    })
-}
-
-async fn thread_session_state_from_thread_start_response(
-    response: &ThreadStartResponse,
-    local_settings: &LocalSettings,
-    config: &Config,
-    thread_params_mode: ThreadParamsMode,
-) -> Result<ThreadSessionState, String> {
     let permission_profile = display_permission_profile_from_thread_response(
         &response.sandbox,
         response.cwd.as_path(),
@@ -2901,19 +2843,20 @@ async fn thread_session_state_from_thread_start_response(
         response.reasoning_effort.clone(),
         local_settings,
     )
-    .await?;
+    .await
+    .map_err(color_eyre::eyre::Report::msg)?;
     session.daybreak_enabled = response
         .thread
         .daybreak_enabled
         .unwrap_or(response.thread.ephemeral && config.daybreak_enabled);
-    Ok(session)
+    Ok(started_thread(session, response.thread))
 }
 
-async fn thread_session_state_from_thread_resume_response(
-    response: &ThreadResumeResponse,
+async fn started_thread_from_resume_response(
+    response: ThreadResumeResponse,
     local_settings: &LocalSettings,
     _thread_params_mode: ThreadParamsMode,
-) -> Result<ThreadSessionState, String> {
+) -> Result<AppServerStartedThread> {
     // The server owns restored rules. This legacy projection is for display only;
     // normal turns do not send it back as an execution override.
     let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
@@ -2939,18 +2882,19 @@ async fn thread_session_state_from_thread_resume_response(
         response.reasoning_effort.clone(),
         local_settings,
     )
-    .await?;
+    .await
+    .map_err(color_eyre::eyre::Report::msg)?;
     session.collaboration_mode = response.collaboration_mode.clone().map(Box::new);
     session.daybreak_enabled = response.thread.daybreak_enabled.unwrap_or(false);
-    Ok(session)
+    Ok(started_thread(session, response.thread))
 }
 
-async fn thread_session_state_from_thread_fork_response(
-    response: &ThreadForkResponse,
+async fn started_thread_from_fork_response(
+    response: ThreadForkResponse,
     local_settings: &LocalSettings,
     config: &Config,
     thread_params_mode: ThreadParamsMode,
-) -> Result<ThreadSessionState, String> {
+) -> Result<AppServerStartedThread> {
     let permission_profile = display_permission_profile_from_thread_response(
         &response.sandbox,
         response.cwd.as_path(),
@@ -2976,9 +2920,10 @@ async fn thread_session_state_from_thread_fork_response(
         response.reasoning_effort.clone(),
         local_settings,
     )
-    .await?;
+    .await
+    .map_err(color_eyre::eyre::Report::msg)?;
     session.daybreak_enabled = response.thread.daybreak_enabled.unwrap_or(false);
-    Ok(session)
+    Ok(started_thread(session, response.thread))
 }
 
 fn display_permission_profile_from_thread_response(
