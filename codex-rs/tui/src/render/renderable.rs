@@ -12,6 +12,7 @@ use ratatui::widgets::WidgetRef;
 
 use crate::render::Insets;
 use crate::render::RectExt as _;
+use crate::wrapping::word_wrap_lines;
 
 pub trait Renderable {
     fn render(&self, area: Rect, buf: &mut Buffer);
@@ -137,6 +138,23 @@ impl<'a> Renderable for Paragraph<'a> {
     }
     fn desired_height(&self, width: u16) -> u16 {
         self.line_count(width) as u16
+    }
+}
+
+/// Lines word-wrapped to the render width with [`word_wrap_lines`].
+pub(crate) struct WrappedLines(pub(crate) Vec<Line<'static>>);
+
+impl Renderable for WrappedLines {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        Renderable::render(
+            &Paragraph::new(word_wrap_lines(&self.0, usize::from(area.width))),
+            area,
+            buf,
+        );
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        word_wrap_lines(&self.0, usize::from(width)).len() as u16
     }
 }
 

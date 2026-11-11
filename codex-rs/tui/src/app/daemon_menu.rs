@@ -5,25 +5,6 @@ use super::*;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::update_action::DaemonUpdateSource;
-use crate::wrapping::word_wrap_lines;
-use ratatui::buffer::Buffer;
-use ratatui::widgets::Paragraph;
-
-struct DaemonMenuHeader(Vec<Line<'static>>);
-
-impl Renderable for DaemonMenuHeader {
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        Renderable::render(
-            &Paragraph::new(word_wrap_lines(&self.0, usize::from(area.width))),
-            area,
-            buf,
-        );
-    }
-
-    fn desired_height(&self, width: u16) -> u16 {
-        word_wrap_lines(&self.0, usize::from(width)).len() as u16
-    }
-}
 
 impl App {
     pub(super) async fn verify_managed_daemon(&mut self) {
@@ -119,7 +100,7 @@ impl App {
             ..Default::default()
         });
         self.chat_widget.show_selection_view(SelectionViewParams {
-            header: Box::new(DaemonMenuHeader(header)),
+            header: Box::new(WrappedLines(header)),
             items,
             ..SelectionViewParams::picker()
         });
@@ -136,7 +117,7 @@ impl App {
             return;
         }
         self.chat_widget.show_selection_view(SelectionViewParams {
-            header: Box::new(DaemonMenuHeader(vec![
+            header: Box::new(WrappedLines(vec![
                 Line::from("Restart background server?".bold()),
                 Line::from("Active or queued work in other chats may be interrupted."),
                 Line::from("Codex will reconnect automatically."),
@@ -182,7 +163,7 @@ impl App {
         let mut header = vec![Line::from("Update daemon and exit Codex?".bold())];
         header.extend(explanation.lines().map(|line| Line::from(line.to_owned())));
         self.chat_widget.show_selection_view(SelectionViewParams {
-            header: Box::new(DaemonMenuHeader(header)),
+            header: Box::new(WrappedLines(header)),
             items: vec![
                 SelectionItem {
                     name: "Cancel".to_string(),
