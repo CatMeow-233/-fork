@@ -492,25 +492,26 @@ impl ChatWidget {
         });
         let service_tier = self.service_tier_update_for_core();
         let active_permission_profile = self.config.permissions.active_permission_profile();
-        let op = AppCommand::user_turn(
-            if source == UserMessageSource::SafetyRecourse {
+        let op = AppCommand::UserTurn {
+            turn_trigger: if source == UserMessageSource::SafetyRecourse {
                 "safety_recourse_follow_up"
             } else {
                 "user"
             },
             cloud_submission,
-            client_user_message_id.clone(),
+            client_user_message_id: client_user_message_id.clone(),
             items,
-            self.config.cwd.to_path_buf(),
-            AskForApproval::from(self.config.permissions.approval_policy.value()),
+            cwd: self.config.cwd.to_path_buf(),
+            approval_policy: AskForApproval::from(self.config.permissions.approval_policy.value()),
+            approvals_reviewer: None,
             active_permission_profile,
-            effective_mode.model().to_string(),
-            effective_mode.reasoning_effort(),
-            /*summary*/ None,
+            model: effective_mode.model().to_string(),
+            effort: effective_mode.reasoning_effort(),
+            summary: None,
             service_tier,
-            /*final_output_json_schema*/ None,
+            final_output_json_schema: None,
             collaboration_mode,
-        );
+        };
         let submitted_message = UserMessage {
             text,
             local_images,

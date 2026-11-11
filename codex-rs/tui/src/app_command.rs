@@ -235,40 +235,6 @@ impl AppCommand {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn user_turn(
-        turn_trigger: &'static str,
-        cloud_submission: CloudSubmissionIntent,
-        client_user_message_id: String,
-        items: Vec<UserInput>,
-        cwd: PathBuf,
-        approval_policy: AskForApproval,
-        active_permission_profile: Option<ActivePermissionProfile>,
-        model: String,
-        effort: Option<ReasoningEffortConfig>,
-        summary: Option<ReasoningSummaryConfig>,
-        service_tier: Option<Option<String>>,
-        final_output_json_schema: Option<Value>,
-        collaboration_mode: Option<CollaborationMode>,
-    ) -> Self {
-        Self::UserTurn {
-            turn_trigger,
-            cloud_submission,
-            client_user_message_id,
-            items,
-            cwd,
-            approval_policy,
-            approvals_reviewer: None,
-            active_permission_profile,
-            model,
-            effort,
-            summary,
-            service_tier,
-            final_output_json_schema,
-            collaboration_mode,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn override_turn_context(
         cwd: Option<PathBuf>,
         approval_policy: Option<AskForApproval>,
