@@ -906,80 +906,45 @@ impl ChatWidget {
         item: TerminalTitleItem,
         now: Instant,
     ) -> Option<String> {
-        match item {
-            TerminalTitleItem::AppName => Some("codex".to_string()),
-            TerminalTitleItem::Project => self.terminal_title_project_name(),
-            TerminalTitleItem::CurrentDir => Some(Self::truncate_terminal_title_part(
-                format_directory_display(self.status_line_cwd(), /*max_width*/ None),
-                /*max_chars*/ 32,
-            )),
-            TerminalTitleItem::Spinner => self.terminal_title_spinner_text_at(now),
-            TerminalTitleItem::Status => Some(self.run_state_status_text()),
+        let status_line_item = match item {
+            TerminalTitleItem::AppName => return Some("codex".to_string()),
+            TerminalTitleItem::Project => return self.terminal_title_project_name(),
+            TerminalTitleItem::CurrentDir => StatusLineItem::CurrentDir,
+            TerminalTitleItem::Spinner => return self.terminal_title_spinner_text_at(now),
+            TerminalTitleItem::Status => return Some(self.run_state_status_text()),
             TerminalTitleItem::Thread | TerminalTitleItem::ThreadName => {
                 let item = if item == TerminalTitleItem::ThreadName {
                     StatusLineItem::ThreadName
                 } else {
                     StatusLineItem::ThreadTitle
                 };
-                self.status_line_value_for_item(item)
-                    .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 48))
+                return self
+                    .status_line_value_for_item(item)
+                    .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 48));
             }
-            TerminalTitleItem::GitBranch => self.status_line_branch.as_ref().map(|branch| {
-                Self::truncate_terminal_title_part(branch.clone(), /*max_chars*/ 32)
-            }),
-            TerminalTitleItem::ContextRemaining => self
-                .status_line_value_for_item(StatusLineItem::ContextRemaining)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::ContextUsed => self
-                .status_line_value_for_item(StatusLineItem::ContextUsed)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::FiveHourLimit => self
-                .status_line_value_for_item(StatusLineItem::FiveHourLimit)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::WeeklyLimit => self
-                .status_line_value_for_item(StatusLineItem::WeeklyLimit)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::CodexVersion => self
-                .status_line_value_for_item(StatusLineItem::CodexVersion)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::UsedTokens => self
-                .status_line_value_for_item(StatusLineItem::UsedTokens)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::TotalInputTokens => self
-                .status_line_value_for_item(StatusLineItem::TotalInputTokens)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::TotalOutputTokens => self
-                .status_line_value_for_item(StatusLineItem::TotalOutputTokens)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::ThreadCredits => self
-                .status_line_value_for_item(StatusLineItem::ThreadCredits)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::EstimatedThreadCost => self
-                .status_line_value_for_item(StatusLineItem::EstimatedThreadCost)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::SessionId => self
-                .status_line_value_for_item(StatusLineItem::SessionId)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
-            TerminalTitleItem::FastMode => self
-                .status_line_value_for_item(StatusLineItem::FastMode)
-                .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32)),
+            TerminalTitleItem::GitBranch => StatusLineItem::GitBranch,
+            TerminalTitleItem::ContextRemaining => StatusLineItem::ContextRemaining,
+            TerminalTitleItem::ContextUsed => StatusLineItem::ContextUsed,
+            TerminalTitleItem::FiveHourLimit => StatusLineItem::FiveHourLimit,
+            TerminalTitleItem::WeeklyLimit => StatusLineItem::WeeklyLimit,
+            TerminalTitleItem::CodexVersion => StatusLineItem::CodexVersion,
+            TerminalTitleItem::UsedTokens => StatusLineItem::UsedTokens,
+            TerminalTitleItem::TotalInputTokens => StatusLineItem::TotalInputTokens,
+            TerminalTitleItem::TotalOutputTokens => StatusLineItem::TotalOutputTokens,
+            TerminalTitleItem::ThreadCredits => StatusLineItem::ThreadCredits,
+            TerminalTitleItem::EstimatedThreadCost => StatusLineItem::EstimatedThreadCost,
+            TerminalTitleItem::SessionId => StatusLineItem::SessionId,
+            TerminalTitleItem::FastMode => StatusLineItem::FastMode,
             TerminalTitleItem::Daybreak => {
-                self.status_line_value_for_item(StatusLineItem::Daybreak)
+                return self.status_line_value_for_item(StatusLineItem::Daybreak);
             }
-            TerminalTitleItem::Model => Some(Self::truncate_terminal_title_part(
-                self.model_display_name().to_string(),
-                /*max_chars*/ 32,
-            )),
-            TerminalTitleItem::ModelWithReasoning => Some(Self::truncate_terminal_title_part(
-                self.model_with_reasoning_display_name(),
-                /*max_chars*/ 32,
-            )),
-            TerminalTitleItem::Reasoning => Some(Self::truncate_terminal_title_part(
-                self.reasoning_display_name(),
-                /*max_chars*/ 32,
-            )),
-            TerminalTitleItem::TaskProgress => self.terminal_title_task_progress(),
-        }
+            TerminalTitleItem::Model => StatusLineItem::ModelName,
+            TerminalTitleItem::ModelWithReasoning => StatusLineItem::ModelWithReasoning,
+            TerminalTitleItem::Reasoning => StatusLineItem::Reasoning,
+            TerminalTitleItem::TaskProgress => return self.terminal_title_task_progress(),
+        };
+        self.status_line_value_for_item(status_line_item)
+            .map(|value| Self::truncate_terminal_title_part(value, /*max_chars*/ 32))
     }
 
     fn reasoning_display_name(&self) -> String {
