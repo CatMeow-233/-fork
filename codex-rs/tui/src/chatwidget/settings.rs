@@ -372,17 +372,8 @@ impl ChatWidget {
     /// We intentionally default to `true` when model metadata cannot be read so transient catalog
     /// failures do not hard-block user input in the UI.
     pub(super) fn current_model_supports_images(&self) -> bool {
-        let model = self.current_model();
-        self.model_catalog
-            .try_list_models()
-            .ok()
-            .and_then(|models| {
-                models
-                    .into_iter()
-                    .find(|preset| preset.model == model)
-                    .map(|preset| preset.input_modalities.contains(&InputModality::Image))
-            })
-            .unwrap_or(true)
+        self.current_model_preset()
+            .is_none_or(|preset| preset.input_modalities.contains(&InputModality::Image))
     }
 
     pub(super) fn sync_image_paste_enabled(&mut self) {

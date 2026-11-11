@@ -73,26 +73,18 @@ impl ChatWidget {
     }
 
     pub(super) fn current_model_service_tier_commands(&self) -> Vec<ServiceTierCommand> {
-        let model = self.current_model();
-        self.model_catalog
-            .try_list_models()
-            .ok()
-            .and_then(|models| {
-                models
+        self.current_model_preset()
+            .map(|preset| {
+                preset
+                    .service_tiers
                     .into_iter()
-                    .find(|preset| preset.model == model)
-                    .map(|preset| {
-                        preset
-                            .service_tiers
-                            .into_iter()
-                            .filter(|tier| self.config.features.service_tier_enabled(&tier.id))
-                            .map(|tier| ServiceTierCommand {
-                                id: tier.id,
-                                name: tier.name.to_lowercase(),
-                                description: tier.description,
-                            })
-                            .collect()
+                    .filter(|tier| self.config.features.service_tier_enabled(&tier.id))
+                    .map(|tier| ServiceTierCommand {
+                        id: tier.id,
+                        name: tier.name.to_lowercase(),
+                        description: tier.description,
                     })
+                    .collect()
             })
             .unwrap_or_default()
     }

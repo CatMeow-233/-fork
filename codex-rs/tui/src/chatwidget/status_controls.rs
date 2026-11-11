@@ -221,16 +221,9 @@ impl ChatWidget {
             .unwrap_or(&default_usage);
         let collaboration_mode = self.collaboration_mode_label();
         let model = self.current_model().to_string();
-        let model_default_reasoning_effort =
-            self.model_catalog
-                .try_list_models()
-                .ok()
-                .and_then(|models| {
-                    models
-                        .into_iter()
-                        .find(|preset| preset.model == model)
-                        .map(|preset| preset.default_reasoning_effort)
-                });
+        let model_default_reasoning_effort = self
+            .current_model_preset()
+            .map(|preset| preset.default_reasoning_effort);
         let reasoning_effort_override = Some(
             self.effective_reasoning_effort()
                 .or_else(|| self.config.model_reasoning_effort.clone())

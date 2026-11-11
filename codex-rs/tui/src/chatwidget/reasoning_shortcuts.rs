@@ -148,7 +148,7 @@ impl ChatWidget {
         true
     }
 
-    fn current_model_preset(&self) -> Option<ModelPreset> {
+    pub(super) fn current_model_preset(&self) -> Option<ModelPreset> {
         let current_model = self.current_model();
         self.model_catalog
             .try_list_models()
