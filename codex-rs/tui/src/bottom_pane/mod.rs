@@ -762,6 +762,18 @@ impl BottomPane {
         self.view_stack.last().map(std::convert::AsRef::as_ref)
     }
 
+    fn active_view_with_id(&self, view_id: &'static str) -> Option<&dyn BottomPaneView> {
+        self.active_view()
+            .filter(|view| view.view_id() == Some(view_id))
+    }
+
+    /// Index of the newest view in the stack with `view_id`.
+    fn view_index(&self, view_id: &'static str) -> Option<usize> {
+        self.view_stack
+            .iter()
+            .rposition(|view| view.view_id() == Some(view_id))
+    }
+
     pub(crate) fn current_patch_approval(&self) -> Option<&ApplyPatchApprovalRequest> {
         self.view_stack
             .iter()
@@ -1557,11 +1569,7 @@ impl BottomPane {
         view_id: &'static str,
         mut params: list_selection_view::SelectionViewParams,
     ) -> bool {
-        let is_match = self
-            .view_stack
-            .last()
-            .is_some_and(|view| view.view_id() == Some(view_id));
-        if !is_match {
+        if self.active_view_with_id(view_id).is_none() {
             return false;
         }
 
@@ -1594,11 +1602,7 @@ impl BottomPane {
         view_id: &'static str,
         mut params: list_selection_view::SelectionViewParams,
     ) -> bool {
-        let Some(index) = self
-            .view_stack
-            .iter()
-            .rposition(|view| view.view_id() == Some(view_id))
-        else {
+        let Some(index) = self.view_index(view_id) else {
             return false;
         };
 
@@ -1624,11 +1628,7 @@ impl BottomPane {
         view_id: &'static str,
         view: Box<dyn BottomPaneView>,
     ) {
-        if let Some(index) = self
-            .view_stack
-            .iter()
-            .rposition(|existing| existing.view_id() == Some(view_id))
-        {
+        if let Some(index) = self.view_index(view_id) {
             self.view_stack[index] = view;
             self.request_redraw();
         }
@@ -1673,20 +1673,16 @@ impl BottomPane {
     }
 
     pub(crate) fn selected_index_for_active_view(&self, view_id: &'static str) -> Option<usize> {
-        self.view_stack
-            .last()
-            .filter(|view| view.view_id() == Some(view_id))
-            .and_then(|view| view.selected_index())
+        self.active_view_with_id(view_id)
+            .and_then(BottomPaneView::selected_index)
     }
 
     pub(crate) fn selection_toggle_states_for_active_view(
         &self,
         view_id: &'static str,
     ) -> Option<Vec<Option<SelectionToggleState>>> {
-        self.view_stack
-            .last()
-            .filter(|view| view.view_id() == Some(view_id))
-            .map(|view| view.selection_toggle_states())
+        self.active_view_with_id(view_id)
+            .map(BottomPaneView::selection_toggle_states)
     }
 
     pub(crate) fn complete_selection_toggle_for_active_view(
@@ -1711,10 +1707,8 @@ impl BottomPane {
     }
 
     pub(crate) fn active_tab_id_for_active_view(&self, view_id: &'static str) -> Option<&str> {
-        self.view_stack
-            .last()
-            .filter(|view| view.view_id() == Some(view_id))
-            .and_then(|view| view.active_tab_id())
+        self.active_view_with_id(view_id)
+            .and_then(BottomPaneView::active_tab_id)
     }
 
     /// Forward a suggestion to its matching prompt, even beneath another view.
@@ -1737,11 +1731,7 @@ impl BottomPane {
     }
 
     pub(crate) fn dismiss_active_view_if_id(&mut self, view_id: &'static str) -> bool {
-        let is_match = self
-            .view_stack
-            .last()
-            .is_some_and(|view| view.view_id() == Some(view_id));
-        if !is_match {
+        if self.active_view_with_id(view_id).is_none() {
             return false;
         }
 
@@ -1753,11 +1743,7 @@ impl BottomPane {
 
     /// Dismiss the newest matching view without disturbing views stacked above it.
     pub(crate) fn dismiss_view_by_id(&mut self, view_id: &'static str) -> bool {
-        let Some(index) = self
-            .view_stack
-            .iter()
-            .rposition(|view| view.view_id() == Some(view_id))
-        else {
+        let Some(index) = self.view_index(view_id) else {
             return false;
         };
 
