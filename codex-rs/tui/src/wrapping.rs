@@ -241,42 +241,7 @@ where
     O: Into<Options<'a>>,
 {
     let opts = width_or_options.into();
-    if let Some(projected) = project_complex_graphemes(text) {
-        return wrap_projected_ranges(&projected, &opts, /*include_trailing_spaces*/ true);
-    }
-    let mut lines: Vec<Range<usize>> = Vec::new();
-    let mut cursor = 0usize;
-    for (line_index, line) in textwrap::wrap(text, &opts).iter().enumerate() {
-        match line {
-            std::borrow::Cow::Borrowed(slice) => {
-                let range = borrowed_slice_range(text, slice).unwrap_or_else(|| {
-                    let synthetic_prefix = if line_index == 0 {
-                        opts.initial_indent
-                    } else {
-                        opts.subsequent_indent
-                    };
-                    map_owned_wrapped_line_to_range(text, cursor, slice, synthetic_prefix)
-                });
-                let start = range.start;
-                let end = range.end;
-                let trailing_spaces = text[end..].chars().take_while(|c| *c == ' ').count();
-                lines.push(start..end + trailing_spaces + 1);
-                cursor = end + trailing_spaces;
-            }
-            std::borrow::Cow::Owned(slice) => {
-                let synthetic_prefix = if line_index == 0 {
-                    opts.initial_indent
-                } else {
-                    opts.subsequent_indent
-                };
-                let mapped = map_owned_wrapped_line_to_range(text, cursor, slice, synthetic_prefix);
-                let trailing_spaces = text[mapped.end..].chars().take_while(|c| *c == ' ').count();
-                lines.push(mapped.start..mapped.end + trailing_spaces + 1);
-                cursor = mapped.end + trailing_spaces;
-            }
-        }
-    }
-    lines
+    wrap_source_ranges(text, &opts, /*include_trailing_spaces*/ true)
 }
 
 /// Like `wrap_ranges` but returns ranges without trailing whitespace and
@@ -287,35 +252,39 @@ where
     O: Into<Options<'a>>,
 {
     let opts = width_or_options.into();
+    wrap_source_ranges(text, &opts, /*include_trailing_spaces*/ false)
+}
+
+fn wrap_source_ranges(
+    text: &str,
+    opts: &Options<'_>,
+    include_trailing_spaces: bool,
+) -> Vec<Range<usize>> {
     if let Some(projected) = project_complex_graphemes(text) {
-        return wrap_projected_ranges(&projected, &opts, /*include_trailing_spaces*/ false);
+        return wrap_projected_ranges(&projected, opts, include_trailing_spaces);
     }
     let mut lines: Vec<Range<usize>> = Vec::new();
     let mut cursor = 0usize;
-    for (line_index, line) in textwrap::wrap(text, &opts).iter().enumerate() {
-        match line {
-            std::borrow::Cow::Borrowed(slice) => {
-                let range = borrowed_slice_range(text, slice).unwrap_or_else(|| {
-                    let synthetic_prefix = if line_index == 0 {
-                        opts.initial_indent
-                    } else {
-                        opts.subsequent_indent
-                    };
-                    map_owned_wrapped_line_to_range(text, cursor, slice, synthetic_prefix)
-                });
-                cursor = range.end;
-                lines.push(range);
-            }
-            std::borrow::Cow::Owned(slice) => {
-                let synthetic_prefix = if line_index == 0 {
-                    opts.initial_indent
-                } else {
-                    opts.subsequent_indent
-                };
-                let mapped = map_owned_wrapped_line_to_range(text, cursor, slice, synthetic_prefix);
-                lines.push(mapped.clone());
-                cursor = mapped.end;
-            }
+    for (line_index, line) in textwrap::wrap(text, opts).iter().enumerate() {
+        let borrowed = match line {
+            Cow::Borrowed(slice) => borrowed_slice_range(text, slice),
+            Cow::Owned(_) => None,
+        };
+        let range = borrowed.unwrap_or_else(|| {
+            let synthetic_prefix = if line_index == 0 {
+                opts.initial_indent
+            } else {
+                opts.subsequent_indent
+            };
+            map_owned_wrapped_line_to_range(text, cursor, line, synthetic_prefix)
+        });
+        if include_trailing_spaces {
+            let trailing_spaces = text[range.end..].chars().take_while(|c| *c == ' ').count();
+            cursor = range.end + trailing_spaces;
+            lines.push(range.start..cursor + 1);
+        } else {
+            cursor = range.end;
+            lines.push(range);
         }
     }
     lines
