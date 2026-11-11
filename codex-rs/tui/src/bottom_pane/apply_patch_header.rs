@@ -1,6 +1,7 @@
 //! Render file-change approval descriptions and cross-platform destinations.
 
 use super::approval_overlay::ApplyPatchApprovalRequest;
+use super::approval_overlay::thread_label_lines;
 use crate::diff_model::FileChange;
 use crate::render::renderable::Renderable;
 use crate::terminal_hyperlinks::HyperlinkText;
@@ -9,18 +10,7 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 
 pub(super) fn build_header(request: &ApplyPatchApprovalRequest) -> Box<dyn Renderable> {
-    let mut header = Vec::new();
-    if let Some(thread_label) = &request.thread_label {
-        header.push(Line::from(vec![
-            "Thread: ".into(),
-            thread_label.clone().bold(),
-        ]));
-    }
-
-    if !header.is_empty() {
-        header.push(Line::from(""));
-    }
-
+    let mut header = thread_label_lines(request.thread_label.as_deref());
     let description = request
         .reason
         .as_deref()

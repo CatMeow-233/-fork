@@ -21,6 +21,7 @@ use crate::bottom_pane::ListSelectionView;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::ViewCompletion;
+use crate::bottom_pane::approval_overlay::thread_label_lines;
 use crate::bottom_pane::popup_consts::accept_cancel_hint_line;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
@@ -276,14 +277,7 @@ pub(crate) fn prompt_header(request: &UserVerificationRequest) -> Box<dyn Render
 }
 
 fn request_details(request: &UserVerificationRequest) -> Box<dyn Renderable> {
-    let mut lines = Vec::new();
-    if let Some(thread_label) = &request.thread_label {
-        lines.push(Line::from(vec![
-            "Thread: ".into(),
-            thread_label.clone().bold(),
-        ]));
-        lines.push(Line::from(""));
-    }
+    let mut lines = thread_label_lines(request.thread_label.as_deref());
     lines.extend([
         Line::from(vec!["Server: ".into(), request.server_name.clone().bold()]),
         Line::from(""),

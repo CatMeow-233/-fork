@@ -718,28 +718,46 @@ fn network_approval_command_target(command: &[String]) -> Option<&str> {
     }
 }
 
+/// Thread, environment and reason rows for the values present, each followed by a blank line.
+fn request_context_lines(
+    thread_label: Option<&str>,
+    environment_id: Option<&str>,
+    reason: Option<&str>,
+) -> Vec<Line<'static>> {
+    [
+        (
+            "Thread: ",
+            thread_label.map(|value| value.to_string().bold()),
+        ),
+        (
+            "Environment: ",
+            environment_id.map(|value| value.to_string().bold()),
+        ),
+        ("Reason: ", reason.map(|value| value.to_string().italic())),
+    ]
+    .into_iter()
+    .filter_map(|(label, value)| value.map(|value| Line::from(vec![label.into(), value])))
+    .flat_map(|line| [line, Line::from("")])
+    .collect()
+}
+
+/// The labelled thread row, if any, followed by a blank line.
+pub(super) fn thread_label_lines(thread_label: Option<&str>) -> Vec<Line<'static>> {
+    request_context_lines(
+        thread_label,
+        /*environment_id*/ None,
+        /*reason*/ None,
+    )
+}
+
 fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
     match request {
         ApprovalRequest::Exec(request) => {
-            let mut header: Vec<Line<'static>> = Vec::new();
-            if let Some(thread_label) = &request.thread_label {
-                header.push(Line::from(vec![
-                    "Thread: ".into(),
-                    thread_label.clone().bold(),
-                ]));
-                header.push(Line::from(""));
-            }
-            if let Some(environment_id) = &request.environment_id {
-                header.push(Line::from(vec![
-                    "Environment: ".into(),
-                    environment_id.clone().bold(),
-                ]));
-                header.push(Line::from(""));
-            }
-            if let Some(reason) = &request.reason {
-                header.push(Line::from(vec!["Reason: ".into(), reason.clone().italic()]));
-                header.push(Line::from(""));
-            }
+            let mut header = request_context_lines(
+                request.thread_label.as_deref(),
+                request.environment_id.as_deref(),
+                request.reason.as_deref(),
+            );
             if let Some(additional_permissions) = &request.additional_permissions
                 && let Some(rule_line) = format_additional_permissions_rule(additional_permissions)
             {
@@ -765,25 +783,11 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
             Box::new(crate::terminal_hyperlinks::HyperlinkText::new(header))
         }
         ApprovalRequest::Permissions(request) => {
-            let mut header: Vec<Line<'static>> = Vec::new();
-            if let Some(thread_label) = &request.thread_label {
-                header.push(Line::from(vec![
-                    "Thread: ".into(),
-                    thread_label.clone().bold(),
-                ]));
-                header.push(Line::from(""));
-            }
-            if let Some(environment_id) = &request.environment_id {
-                header.push(Line::from(vec![
-                    "Environment: ".into(),
-                    environment_id.clone().bold(),
-                ]));
-                header.push(Line::from(""));
-            }
-            if let Some(reason) = &request.reason {
-                header.push(Line::from(vec!["Reason: ".into(), reason.clone().italic()]));
-                header.push(Line::from(""));
-            }
+            let mut header = request_context_lines(
+                request.thread_label.as_deref(),
+                request.environment_id.as_deref(),
+                request.reason.as_deref(),
+            );
             if let Some(rule_line) = format_requested_permissions_rule(&request.permissions) {
                 header.push(Line::from(vec![
                     "Permission rule: ".into(),
@@ -794,14 +798,7 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
         }
         ApprovalRequest::ApplyPatch(request) => super::apply_patch_header::build_header(request),
         ApprovalRequest::McpElicitation(request) => {
-            let mut lines = Vec::new();
-            if let Some(thread_label) = &request.thread_label {
-                lines.push(Line::from(vec![
-                    "Thread: ".into(),
-                    thread_label.clone().bold(),
-                ]));
-                lines.push(Line::from(""));
-            }
+            let mut lines = thread_label_lines(request.thread_label.as_deref());
             lines.extend([
                 Line::from(vec!["Server: ".into(), request.server_name.clone().bold()]),
                 Line::from(""),
