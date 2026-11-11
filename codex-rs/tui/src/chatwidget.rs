@@ -356,7 +356,6 @@ use self::rate_limits::RateLimitErrorKind;
 use self::rate_limits::RateLimitSwitchPromptState;
 use self::rate_limits::RateLimitWarningState;
 use self::rate_limits::app_server_rate_limit_error_kind;
-pub(crate) use self::rate_limits::fallback_limit_label;
 use self::rate_limits::is_app_server_cyber_policy_error;
 mod recap;
 mod reset_credits;

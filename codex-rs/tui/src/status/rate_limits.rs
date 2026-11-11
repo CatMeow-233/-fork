@@ -5,7 +5,6 @@
 //!
 //! The key contract is that time-sensitive values are interpreted relative to a caller-provided
 //! capture timestamp so stale detection and reset labels remain coherent for a given draw cycle.
-use crate::chatwidget::fallback_limit_label;
 use crate::chatwidget::limit_label_for_window;
 use crate::clock_format::ClockFormat;
 use crate::text_formatting::capitalize_first;
@@ -248,18 +247,6 @@ pub(crate) fn compose_rate_limit_data_many(
 
         let limit_bucket_label = crate::model_catalog::model_display_name(&snapshot.limit_name);
         let show_limit_prefix = !limit_bucket_label.eq_ignore_ascii_case("codex");
-        let primary_label = snapshot
-            .primary
-            .as_ref()
-            .map(|window| {
-                limit_label_for_window(window.window_minutes, /*is_secondary*/ false)
-            })
-            .map(|label| capitalize_first(&label));
-        let secondary_label = snapshot
-            .secondary
-            .as_ref()
-            .map(|window| limit_label_for_window(window.window_minutes, /*is_secondary*/ true))
-            .map(|label| capitalize_first(&label));
         let window_count =
             usize::from(snapshot.primary.is_some()) + usize::from(snapshot.secondary.is_some());
         let combine_non_codex_single_limit = show_limit_prefix && window_count == 1;
@@ -271,55 +258,22 @@ pub(crate) fn compose_rate_limit_data_many(
             });
         }
 
-        if let Some(primary) = snapshot.primary.as_ref() {
+        for (window, is_secondary) in [(&snapshot.primary, false), (&snapshot.secondary, true)] {
+            let Some(window) = window else {
+                continue;
+            };
+            let window_label =
+                capitalize_first(&limit_label_for_window(window.window_minutes, is_secondary));
             let label = if combine_non_codex_single_limit {
-                format!(
-                    "{} {} limit",
-                    limit_bucket_label,
-                    primary_label.clone().unwrap_or_else(|| capitalize_first(
-                        fallback_limit_label(/*is_secondary*/ false)
-                    ))
-                )
+                format!("{limit_bucket_label} {window_label} limit")
             } else {
-                format!(
-                    "{} limit",
-                    primary_label.clone().unwrap_or_else(|| capitalize_first(
-                        fallback_limit_label(/*is_secondary*/ false)
-                    ))
-                )
+                format!("{window_label} limit")
             };
             rows.push(StatusRateLimitRow {
                 label,
                 value: StatusRateLimitValue::Window {
-                    percent_used: primary.used_percent,
-                    resets_at: primary.resets_at.clone(),
-                    details: None,
-                },
-            });
-        }
-
-        if let Some(secondary) = snapshot.secondary.as_ref() {
-            let label = if combine_non_codex_single_limit {
-                format!(
-                    "{} {} limit",
-                    limit_bucket_label,
-                    secondary_label.clone().unwrap_or_else(|| capitalize_first(
-                        fallback_limit_label(/*is_secondary*/ true)
-                    ))
-                )
-            } else {
-                format!(
-                    "{} limit",
-                    secondary_label.clone().unwrap_or_else(|| capitalize_first(
-                        fallback_limit_label(/*is_secondary*/ true)
-                    ))
-                )
-            };
-            rows.push(StatusRateLimitRow {
-                label,
-                value: StatusRateLimitValue::Window {
-                    percent_used: secondary.used_percent,
-                    resets_at: secondary.resets_at.clone(),
+                    percent_used: window.used_percent,
+                    resets_at: window.resets_at.clone(),
                     details: None,
                 },
             });
