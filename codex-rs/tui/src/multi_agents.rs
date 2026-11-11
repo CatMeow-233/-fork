@@ -350,12 +350,7 @@ fn spawn_end(
         ),
         None => title_text("Agent spawn failed"),
     };
-
-    let mut details = Vec::new();
-    if let Some(line) = prompt_line(prompt) {
-        details.push(line);
-    }
-    collab_event(title, details)
+    collab_event(title, prompt_line(prompt).into_iter().collect())
 }
 
 fn interaction_end(
@@ -363,17 +358,8 @@ fn interaction_end(
     prompt: &str,
     agent_metadata: &mut impl FnMut(ThreadId) -> AgentMetadata,
 ) -> PlainHistoryCell {
-    let title = title_with_agent(
-        "Sent input to",
-        agent_label(receiver_thread_id, &agent_metadata(receiver_thread_id)),
-        /*spawn_request*/ None,
-    );
-
-    let mut details = Vec::new();
-    if let Some(line) = prompt_line(prompt) {
-        details.push(line);
-    }
-    collab_event(title, details)
+    let title = agent_title("Sent input to", receiver_thread_id, agent_metadata);
+    collab_event(title, prompt_line(prompt).into_iter().collect())
 }
 
 fn waiting_begin(
@@ -421,28 +407,16 @@ fn close_end(
     receiver_thread_id: ThreadId,
     agent_metadata: &mut impl FnMut(ThreadId) -> AgentMetadata,
 ) -> PlainHistoryCell {
-    collab_event(
-        title_with_agent(
-            "Closed",
-            agent_label(receiver_thread_id, &agent_metadata(receiver_thread_id)),
-            /*spawn_request*/ None,
-        ),
-        Vec::new(),
-    )
+    let title = agent_title("Closed", receiver_thread_id, agent_metadata);
+    collab_event(title, Vec::new())
 }
 
 fn resume_begin(
     receiver_thread_id: ThreadId,
     agent_metadata: &mut impl FnMut(ThreadId) -> AgentMetadata,
 ) -> PlainHistoryCell {
-    collab_event(
-        title_with_agent(
-            "Resuming",
-            agent_label(receiver_thread_id, &agent_metadata(receiver_thread_id)),
-            /*spawn_request*/ None,
-        ),
-        Vec::new(),
-    )
+    let title = agent_title("Resuming", receiver_thread_id, agent_metadata);
+    collab_event(title, Vec::new())
 }
 
 fn resume_end(
@@ -451,14 +425,8 @@ fn resume_end(
     fallback_error: &str,
     agent_metadata: &mut impl FnMut(ThreadId) -> AgentMetadata,
 ) -> PlainHistoryCell {
-    collab_event(
-        title_with_agent(
-            "Resumed",
-            agent_label(receiver_thread_id, &agent_metadata(receiver_thread_id)),
-            /*spawn_request*/ None,
-        ),
-        vec![status_summary_line(status, fallback_error)],
-    )
+    let title = agent_title("Resumed", receiver_thread_id, agent_metadata);
+    collab_event(title, vec![status_summary_line(status, fallback_error)])
 }
 
 fn collab_event(title: Line<'static>, details: Vec<Line<'static>>) -> PlainHistoryCell {
@@ -482,6 +450,19 @@ fn title_with_agent(
     spans.extend(agent_label_spans(agent));
     spans.extend(spawn_request_spans(spawn_request));
     title_spans_line(spans)
+}
+
+/// Title for an event about one agent, looking up its label through `agent_metadata`.
+fn agent_title(
+    prefix: &str,
+    thread_id: ThreadId,
+    agent_metadata: &mut impl FnMut(ThreadId) -> AgentMetadata,
+) -> Line<'static> {
+    title_with_agent(
+        prefix,
+        agent_label(thread_id, &agent_metadata(thread_id)),
+        /*spawn_request*/ None,
+    )
 }
 
 fn title_spans_line(mut spans: Vec<Span<'static>>) -> Line<'static> {
