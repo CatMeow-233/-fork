@@ -599,7 +599,9 @@ impl App {
         let mut read_only_thread = false;
         let mut provider_error = None;
         let mut history_notice = None;
-        let (mut chat_widget, initial_started_thread) = match session_selection {
+        // Only Resume and Fork start the widget on an existing target session.
+        let no_target_session = pending_startup_thread_start || start_in_agents_overview;
+        let (initial_started_thread, startup_tooltip_override) = match session_selection {
             SessionSelection::StartFresh
             | SessionSelection::Exit
             | SessionSelection::AgentsOverview => {
@@ -635,39 +637,7 @@ impl App {
                         }
                     }
                 };
-                let init = crate::chatwidget::ChatWidgetInit {
-                    local_settings: local_settings.clone(),
-                    config: config.clone(),
-                    frame_requester: tui.frame_requester(),
-                    app_event_tx: app_event_tx.clone(),
-                    workspace_command_runner: Some(workspace_command_runner.clone()),
-                    initial_user_message: crate::chatwidget::create_initial_user_message(
-                        initial_prompt.clone(),
-                        initial_images.clone(),
-                        // CLI prompt args are plain strings, so they don't provide element ranges.
-                        Vec::new(),
-                    ),
-                    enhanced_keys_supported,
-                    has_chatgpt_account,
-                    requires_openai_auth,
-                    has_codex_backend_auth,
-                    model_catalog: model_catalog.clone(),
-                    feedback: feedback.clone(),
-                    is_first_run,
-                    status_account_display: status_account_display.clone(),
-                    initial_plan_type,
-                    model: Some(model.clone()),
-                    startup_tooltip_override,
-                    status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
-                    terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
-                        .clone(),
-                    session_telemetry: session_telemetry.clone(),
-                };
-                let mut chat_widget = ChatWidget::new_with_app_event(init);
-                chat_widget.set_queue_submissions_until_session_configured(
-                    /*queue*/ !start_in_agents_overview,
-                );
-                (chat_widget, None)
+                (None, startup_tooltip_override)
             }
             SessionSelection::Resume(target_session) => {
                 if app_server_target.thread_params_mode()
@@ -788,36 +758,7 @@ impl App {
                         }
                     }
                 };
-                let init = crate::chatwidget::ChatWidgetInit {
-                    local_settings: local_settings.clone(),
-                    config: config.clone(),
-                    frame_requester: tui.frame_requester(),
-                    app_event_tx: app_event_tx.clone(),
-                    workspace_command_runner: Some(workspace_command_runner.clone()),
-                    initial_user_message: crate::chatwidget::create_initial_user_message(
-                        initial_prompt.clone(),
-                        initial_images.clone(),
-                        // CLI prompt args are plain strings, so they don't provide element ranges.
-                        Vec::new(),
-                    )
-                    .filter(|_| resumed.is_some()),
-                    enhanced_keys_supported,
-                    has_chatgpt_account,
-                    requires_openai_auth,
-                    has_codex_backend_auth,
-                    model_catalog: model_catalog.clone(),
-                    feedback: feedback.clone(),
-                    is_first_run,
-                    status_account_display: status_account_display.clone(),
-                    initial_plan_type,
-                    model: config.model.clone(),
-                    startup_tooltip_override: None,
-                    status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
-                    terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
-                        .clone(),
-                    session_telemetry: session_telemetry.clone(),
-                };
-                (ChatWidget::new_with_app_event(init), resumed)
+                (resumed, None)
             }
             SessionSelection::Fork(target_session) => {
                 let explicit_permission_override =
@@ -900,38 +841,47 @@ impl App {
                         config.model_reasoning_effort = forked.session.reasoning_effort.clone();
                     }
                 }
-                let init = crate::chatwidget::ChatWidgetInit {
-                    local_settings: local_settings.clone(),
-                    config: config.clone(),
-                    frame_requester: tui.frame_requester(),
-                    app_event_tx: app_event_tx.clone(),
-                    workspace_command_runner: Some(workspace_command_runner.clone()),
-                    initial_user_message: crate::chatwidget::create_initial_user_message(
-                        initial_prompt.clone(),
-                        initial_images.clone(),
-                        // CLI prompt args are plain strings, so they don't provide element ranges.
-                        Vec::new(),
-                    )
-                    .filter(|_| forked.is_some()),
-                    enhanced_keys_supported,
-                    has_chatgpt_account,
-                    requires_openai_auth,
-                    has_codex_backend_auth,
-                    model_catalog: model_catalog.clone(),
-                    feedback: feedback.clone(),
-                    is_first_run,
-                    status_account_display: status_account_display.clone(),
-                    initial_plan_type,
-                    model: config.model.clone(),
-                    startup_tooltip_override: None,
-                    status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
-                    terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
-                        .clone(),
-                    session_telemetry: session_telemetry.clone(),
-                };
-                (ChatWidget::new_with_app_event(init), forked)
+                (forked, None)
             }
         };
+        let init = crate::chatwidget::ChatWidgetInit {
+            local_settings: local_settings.clone(),
+            config: config.clone(),
+            frame_requester: tui.frame_requester(),
+            app_event_tx: app_event_tx.clone(),
+            workspace_command_runner: Some(workspace_command_runner.clone()),
+            initial_user_message: crate::chatwidget::create_initial_user_message(
+                initial_prompt.clone(),
+                initial_images.clone(),
+                // CLI prompt args are plain strings, so they don't provide element ranges.
+                Vec::new(),
+            )
+            .filter(|_| no_target_session || initial_started_thread.is_some()),
+            enhanced_keys_supported,
+            has_chatgpt_account,
+            requires_openai_auth,
+            has_codex_backend_auth,
+            model_catalog: model_catalog.clone(),
+            feedback: feedback.clone(),
+            is_first_run,
+            status_account_display: status_account_display.clone(),
+            initial_plan_type,
+            model: if no_target_session {
+                Some(model.clone())
+            } else {
+                config.model.clone()
+            },
+            startup_tooltip_override,
+            status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
+            terminal_title_invalid_items_warned: terminal_title_invalid_items_warned.clone(),
+            session_telemetry: session_telemetry.clone(),
+        };
+        let mut chat_widget = ChatWidget::new_with_app_event(init);
+        if no_target_session {
+            chat_widget.set_queue_submissions_until_session_configured(
+                /*queue*/ !start_in_agents_overview,
+            );
+        }
         let startup_session_cancelled = initial_started_thread.is_none()
             && !pending_startup_thread_start
             && !start_in_agents_overview;
