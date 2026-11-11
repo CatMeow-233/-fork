@@ -390,11 +390,6 @@ fn load_animations(
     frame_count: usize,
 ) -> Result<HashMap<String, Animation>> {
     let mut animations = default_animations();
-    if specs.is_empty() {
-        validate_animation_indices(&animations, frame_count)?;
-        return Ok(animations);
-    }
-
     for (name, spec) in specs {
         if spec.frames.is_empty() {
             bail!("animation {name} must include at least one frame");
@@ -482,103 +477,25 @@ fn default_frame_count() -> usize {
 }
 
 fn default_animations() -> HashMap<String, Animation> {
-    [
-        ("idle", idle_animation()),
-        (
-            "running-right",
-            app_state_animation(
-                /*row_index*/ 1, /*frame_count*/ 8, /*frame_duration_ms*/ 120,
-                /*final_frame_duration_ms*/ 220,
-            ),
-        ),
-        (
-            "running-left",
-            app_state_animation(
-                /*row_index*/ 2, /*frame_count*/ 8, /*frame_duration_ms*/ 120,
-                /*final_frame_duration_ms*/ 220,
-            ),
-        ),
-        (
-            "waving",
-            app_state_animation(
-                /*row_index*/ 3, /*frame_count*/ 4, /*frame_duration_ms*/ 140,
-                /*final_frame_duration_ms*/ 280,
-            ),
-        ),
-        (
-            "jumping",
-            app_state_animation(
-                /*row_index*/ 4, /*frame_count*/ 5, /*frame_duration_ms*/ 140,
-                /*final_frame_duration_ms*/ 280,
-            ),
-        ),
-        (
-            "failed",
-            app_state_animation(
-                /*row_index*/ 5, /*frame_count*/ 8, /*frame_duration_ms*/ 140,
-                /*final_frame_duration_ms*/ 240,
-            ),
-        ),
-        (
-            "waiting",
-            app_state_animation(
-                /*row_index*/ 6, /*frame_count*/ 6, /*frame_duration_ms*/ 150,
-                /*final_frame_duration_ms*/ 260,
-            ),
-        ),
-        (
-            "running",
-            app_state_animation(
-                /*row_index*/ 7, /*frame_count*/ 6, /*frame_duration_ms*/ 120,
-                /*final_frame_duration_ms*/ 220,
-            ),
-        ),
-        (
-            "review",
-            app_state_animation(
-                /*row_index*/ 8, /*frame_count*/ 6, /*frame_duration_ms*/ 150,
-                /*final_frame_duration_ms*/ 280,
-            ),
-        ),
-        (
-            "move_right",
-            app_state_animation(
-                /*row_index*/ 1, /*frame_count*/ 8, /*frame_duration_ms*/ 120,
-                /*final_frame_duration_ms*/ 220,
-            ),
-        ),
-        (
-            "move_left",
-            app_state_animation(
-                /*row_index*/ 2, /*frame_count*/ 8, /*frame_duration_ms*/ 120,
-                /*final_frame_duration_ms*/ 220,
-            ),
-        ),
-        (
-            "wave",
-            app_state_animation(
-                /*row_index*/ 3, /*frame_count*/ 4, /*frame_duration_ms*/ 140,
-                /*final_frame_duration_ms*/ 280,
-            ),
-        ),
-        (
-            "bounce",
-            app_state_animation(
-                /*row_index*/ 4, /*frame_count*/ 5, /*frame_duration_ms*/ 140,
-                /*final_frame_duration_ms*/ 280,
-            ),
-        ),
-        (
-            "sad",
-            app_state_animation(
-                /*row_index*/ 5, /*frame_count*/ 8, /*frame_duration_ms*/ 140,
-                /*final_frame_duration_ms*/ 240,
-            ),
-        ),
-    ]
-    .into_iter()
-    .map(|(name, animation)| (name.to_string(), animation))
-    .collect()
+    // (names, spritesheet row, frames, frame ms, final frame ms); names in one row are aliases.
+    let app_states: [(&[&str], usize, usize, u64, u64); 8] = [
+        (&["running-right", "move_right"], 1, 8, 120, 220),
+        (&["running-left", "move_left"], 2, 8, 120, 220),
+        (&["waving", "wave"], 3, 4, 140, 280),
+        (&["jumping", "bounce"], 4, 5, 140, 280),
+        (&["failed", "sad"], 5, 8, 140, 240),
+        (&["waiting"], 6, 6, 150, 260),
+        (&["running"], 7, 6, 120, 220),
+        (&["review"], 8, 6, 150, 280),
+    ];
+    let mut animations = HashMap::from([("idle".to_string(), idle_animation())]);
+    for (names, row, frames, frame_ms, final_ms) in app_states {
+        for name in names {
+            let animation = app_state_animation(row, frames, frame_ms, final_ms);
+            animations.insert(name.to_string(), animation);
+        }
+    }
+    animations
 }
 
 fn idle_animation() -> Animation {
