@@ -230,14 +230,21 @@ impl ChatWidget {
         }
     }
 
-    fn open_plugins_loading_popup(&mut self) {
-        if !self.bottom_pane.replace_selection_view_if_active(
-            PLUGINS_SELECTION_VIEW_ID,
-            self.plugins_loading_popup_params(),
-        ) {
-            self.bottom_pane
-                .show_selection_view(self.plugins_loading_popup_params());
+    /// Refreshes the plugins popup in place when it is active, otherwise opens it.
+    ///
+    /// `params` runs a second time only when nothing was replaced, because the replace attempt
+    /// consumes the first build.
+    fn show_plugins_view(&mut self, params: impl Fn(&Self) -> SelectionViewParams) {
+        if !self
+            .bottom_pane
+            .replace_selection_view_if_active(PLUGINS_SELECTION_VIEW_ID, params(self))
+        {
+            self.bottom_pane.show_selection_view(params(self));
         }
+    }
+
+    fn open_plugins_loading_popup(&mut self) {
+        self.show_plugins_view(Self::plugins_loading_popup_params);
     }
 
     fn open_plugins_popup(&mut self, response: &PluginListResponse) {
@@ -308,14 +315,7 @@ impl ChatWidget {
 
     pub(crate) fn open_marketplace_add_loading_popup(&mut self, _source: &str) {
         self.plugins_active_tab_id = Some(ADD_MARKETPLACE_TAB_ID.to_string());
-        let params = self.marketplace_add_loading_popup_params();
-        if !self
-            .bottom_pane
-            .replace_selection_view_if_active(PLUGINS_SELECTION_VIEW_ID, params)
-        {
-            self.bottom_pane
-                .show_selection_view(self.marketplace_add_loading_popup_params());
-        }
+        self.show_plugins_view(Self::marketplace_add_loading_popup_params);
     }
 
     pub(crate) fn open_marketplace_upgrade_loading_popup(
@@ -327,15 +327,9 @@ impl ChatWidget {
             .active_tab_id_for_active_view(PLUGINS_SELECTION_VIEW_ID)
             .map(str::to_string)
             .or_else(|| self.plugins_active_tab_id.clone());
-        let params = self.marketplace_upgrade_loading_popup_params(marketplace_name);
-        if !self
-            .bottom_pane
-            .replace_selection_view_if_active(PLUGINS_SELECTION_VIEW_ID, params)
-        {
-            self.bottom_pane.show_selection_view(
-                self.marketplace_upgrade_loading_popup_params(marketplace_name),
-            );
-        }
+        self.show_plugins_view(|chat| {
+            chat.marketplace_upgrade_loading_popup_params(marketplace_name)
+        });
     }
 
     pub(crate) fn open_marketplace_remove_confirmation(
@@ -354,35 +348,19 @@ impl ChatWidget {
             return;
         };
 
-        let params = self.marketplace_remove_confirmation_popup_params(
-            &plugins_response,
-            marketplace_name.clone(),
-            marketplace_display_name.clone(),
-        );
-        if !self
-            .bottom_pane
-            .replace_selection_view_if_active(PLUGINS_SELECTION_VIEW_ID, params)
-        {
-            self.bottom_pane.show_selection_view(
-                self.marketplace_remove_confirmation_popup_params(
-                    &plugins_response,
-                    marketplace_name,
-                    marketplace_display_name,
-                ),
-            );
-        }
+        self.show_plugins_view(|chat| {
+            chat.marketplace_remove_confirmation_popup_params(
+                &plugins_response,
+                marketplace_name.clone(),
+                marketplace_display_name.clone(),
+            )
+        });
     }
 
     pub(crate) fn open_marketplace_remove_loading_popup(&mut self, marketplace_display_name: &str) {
-        let params = self.marketplace_remove_loading_popup_params(marketplace_display_name);
-        if !self
-            .bottom_pane
-            .replace_selection_view_if_active(PLUGINS_SELECTION_VIEW_ID, params)
-        {
-            self.bottom_pane.show_selection_view(
-                self.marketplace_remove_loading_popup_params(marketplace_display_name),
-            );
-        }
+        self.show_plugins_view(|chat| {
+            chat.marketplace_remove_loading_popup_params(marketplace_display_name)
+        });
     }
 
     pub(crate) fn open_plugin_detail_loading_popup(&mut self, plugin_display_name: &str) {
@@ -537,14 +515,7 @@ impl ChatWidget {
             }
             Err(_) => {
                 self.plugins_active_tab_id = Some(ADD_MARKETPLACE_TAB_ID.to_string());
-                let params = self.marketplace_add_error_popup_params();
-                if !self
-                    .bottom_pane
-                    .replace_selection_view_if_active(PLUGINS_SELECTION_VIEW_ID, params)
-                {
-                    self.bottom_pane
-                        .show_selection_view(self.marketplace_add_error_popup_params());
-                }
+                self.show_plugins_view(Self::marketplace_add_error_popup_params);
             }
         }
     }
@@ -577,21 +548,12 @@ impl ChatWidget {
                 );
             }
             Err(_) => {
-                let params = self.marketplace_remove_error_popup_params(
-                    &marketplace_name,
-                    &marketplace_display_name,
-                );
-                if !self
-                    .bottom_pane
-                    .replace_selection_view_if_active(PLUGINS_SELECTION_VIEW_ID, params)
-                {
-                    self.bottom_pane.show_selection_view(
-                        self.marketplace_remove_error_popup_params(
-                            &marketplace_name,
-                            &marketplace_display_name,
-                        ),
-                    );
-                }
+                self.show_plugins_view(|chat| {
+                    chat.marketplace_remove_error_popup_params(
+                        &marketplace_name,
+                        &marketplace_display_name,
+                    )
+                });
             }
         }
     }
