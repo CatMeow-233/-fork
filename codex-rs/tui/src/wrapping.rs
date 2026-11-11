@@ -934,8 +934,6 @@ fn word_wrap_flattened_line<'a>(
         .word_separator(rt_opts.word_separator)
         .word_splitter(rt_opts.word_splitter);
 
-    let mut out: Vec<WrappedLine<'a>> = Vec::new();
-
     // Compute first line range with reduced width due to initial indent.
     let initial_width_available = opts
         .width
@@ -943,42 +941,21 @@ fn word_wrap_flattened_line<'a>(
         .max(1);
     let initial_wrapped = wrap_ranges_trim(flat, opts.clone().width(initial_width_available));
     let Some(first_line_range) = initial_wrapped.first() else {
-        return vec![WrappedLine {
-            line: rt_opts.initial_indent.clone().style(line.style),
-            range: 0..0,
-            prefix_bytes: rt_opts
-                .initial_indent
-                .spans
-                .iter()
-                .map(|span| span.content.len())
-                .sum(),
-        }];
+        return vec![wrapped_row(
+            line,
+            span_bounds,
+            &rt_opts.initial_indent,
+            0..0,
+        )];
     };
 
     // Build first wrapped line with initial indent.
-    let mut first_line = rt_opts.initial_indent.clone().style(line.style);
-    {
-        let sliced = slice_line_spans(line, span_bounds, first_line_range);
-        let mut spans = first_line.spans;
-        spans.append(
-            &mut sliced
-                .spans
-                .into_iter()
-                .map(|span| Span::styled(span.content, line.style.patch(span.style)))
-                .collect(),
-        );
-        first_line.spans = spans;
-        out.push(WrappedLine {
-            line: first_line,
-            range: first_line_range.clone(),
-            prefix_bytes: rt_opts
-                .initial_indent
-                .spans
-                .iter()
-                .map(|span| span.content.len())
-                .sum(),
-        });
-    }
+    let mut out = vec![wrapped_row(
+        line,
+        span_bounds,
+        &rt_opts.initial_indent,
+        first_line_range.clone(),
+    )];
 
     let base = first_line_range.end;
     let skip_leading_spaces = flat[base..].chars().take_while(|c| *c == ' ').count();
@@ -1011,34 +988,35 @@ fn word_wrap_flattened_line<'a>(
             .map(|range| (range.start + base)..(range.end + base))
             .collect::<Vec<_>>()
     };
-    for offset_range in remaining_wrapped {
-        if offset_range.is_empty() {
-            continue;
-        }
-        let mut subsequent_line = rt_opts.subsequent_indent.clone().style(line.style);
-        let sliced = slice_line_spans(line, span_bounds, &offset_range);
-        let mut spans = subsequent_line.spans;
-        spans.append(
-            &mut sliced
-                .spans
-                .into_iter()
-                .map(|span| Span::styled(span.content, line.style.patch(span.style)))
-                .collect(),
-        );
-        subsequent_line.spans = spans;
-        out.push(WrappedLine {
-            line: subsequent_line,
-            range: offset_range,
-            prefix_bytes: rt_opts
-                .subsequent_indent
-                .spans
-                .iter()
-                .map(|span| span.content.len())
-                .sum(),
-        });
-    }
-
+    out.extend(
+        remaining_wrapped
+            .into_iter()
+            .filter(|range| !range.is_empty())
+            .map(|range| wrapped_row(line, span_bounds, &rt_opts.subsequent_indent, range)),
+    );
     out
+}
+
+/// Builds one display row: `indent` in the line's style, then `range` of `line`'s spans.
+fn wrapped_row<'a>(
+    line: &'a Line<'a>,
+    span_bounds: &[(Range<usize>, ratatui::style::Style)],
+    indent: &Line<'a>,
+    range: Range<usize>,
+) -> WrappedLine<'a> {
+    let mut row = indent.clone().style(line.style);
+    let prefix_bytes = row.spans.iter().map(|span| span.content.len()).sum();
+    row.spans.extend(
+        slice_line_spans(line, span_bounds, &range)
+            .spans
+            .into_iter()
+            .map(|span| Span::styled(span.content, line.style.patch(span.style))),
+    );
+    WrappedLine {
+        line: row,
+        range,
+        prefix_bytes,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1068,50 +1046,26 @@ fn mixed_url_wrap_line<'a>(
         .saturating_sub(line_width(&rt_opts.subsequent_indent))
         .max(1);
     let ranges = mixed_url_wrap_ranges(flat, initial_width_available, subsequent_width_available);
-
-    let mut out = Vec::new();
-    for (idx, range) in ranges.iter().enumerate() {
-        let mut wrapped_line = if idx == 0 {
-            rt_opts.initial_indent.clone()
-        } else {
-            rt_opts.subsequent_indent.clone()
-        }
-        .style(line.style);
-        let prefix_bytes = wrapped_line
-            .spans
-            .iter()
-            .map(|span| span.content.len())
-            .sum();
-        let sliced = slice_line_spans(line, span_bounds, range);
-        let mut spans = wrapped_line.spans;
-        spans.extend(
-            sliced
-                .spans
-                .into_iter()
-                .map(|span| Span::styled(span.content, line.style.patch(span.style))),
-        );
-        wrapped_line.spans = spans;
-        out.push(WrappedLine {
-            line: wrapped_line,
-            range: range.clone(),
-            prefix_bytes,
-        });
+    if ranges.is_empty() {
+        return vec![wrapped_row(
+            line,
+            span_bounds,
+            &rt_opts.initial_indent,
+            0..0,
+        )];
     }
-
-    if out.is_empty() {
-        vec![WrappedLine {
-            line: rt_opts.initial_indent.clone().style(line.style),
-            range: 0..0,
-            prefix_bytes: rt_opts
-                .initial_indent
-                .spans
-                .iter()
-                .map(|span| span.content.len())
-                .sum(),
-        }]
-    } else {
-        out
-    }
+    ranges
+        .into_iter()
+        .enumerate()
+        .map(|(idx, range)| {
+            let indent = if idx == 0 {
+                &rt_opts.initial_indent
+            } else {
+                &rt_opts.subsequent_indent
+            };
+            wrapped_row(line, span_bounds, indent, range)
+        })
+        .collect()
 }
 
 fn mixed_url_wrap_ranges(
