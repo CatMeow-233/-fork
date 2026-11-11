@@ -547,6 +547,23 @@ impl ChatWidget {
         }
     }
 
+    /// The row that reopens the plugin list with `plugins_response`.
+    fn back_to_plugins_item(&self, plugins_response: PluginListResponse) -> SelectionItem {
+        let cwd = self.config.cwd.to_path_buf();
+        SelectionItem {
+            name: "Back to plugins".to_string(),
+            description: Some("Return to the plugin list".to_string()),
+            selected_description: Some("Return to the plugin list".to_string()),
+            actions: vec![Box::new(move |tx| {
+                tx.send(AppEvent::OpenPluginsList {
+                    cwd: cwd.clone(),
+                    response: plugins_response.clone(),
+                });
+            })],
+            ..Default::default()
+        }
+    }
+
     pub(super) fn marketplace_add_error_popup_params(&self) -> SelectionViewParams {
         let mut items = vec![
             disabled_item(
@@ -565,19 +582,7 @@ impl ChatWidget {
         ];
 
         if let PluginsCacheState::Ready(plugins_response) = self.plugins_cache_for_current_cwd() {
-            let cwd = self.config.cwd.to_path_buf();
-            items.push(SelectionItem {
-                name: "Back to plugins".to_string(),
-                description: Some("Return to the plugin list".to_string()),
-                selected_description: Some("Return to the plugin list".to_string()),
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::OpenPluginsList {
-                        cwd: cwd.clone(),
-                        response: plugins_response.clone(),
-                    });
-                })],
-                ..Default::default()
-            });
+            items.push(self.back_to_plugins_item(plugins_response));
         }
 
         SelectionViewParams {
@@ -617,19 +622,7 @@ impl ChatWidget {
         ];
 
         if let PluginsCacheState::Ready(plugins_response) = self.plugins_cache_for_current_cwd() {
-            let cwd = self.config.cwd.to_path_buf();
-            items.push(SelectionItem {
-                name: "Back to plugins".to_string(),
-                description: Some("Return to the plugin list".to_string()),
-                selected_description: Some("Return to the plugin list".to_string()),
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::OpenPluginsList {
-                        cwd: cwd.clone(),
-                        response: plugins_response.clone(),
-                    });
-                })],
-                ..Default::default()
-            });
+            items.push(self.back_to_plugins_item(plugins_response));
         }
 
         SelectionViewParams {
@@ -648,20 +641,8 @@ impl ChatWidget {
         plugins_response: Option<&PluginListResponse>,
     ) -> SelectionViewParams {
         let mut items = vec![disabled_item("Plugin detail unavailable", err)];
-        if let Some(plugins_response) = plugins_response.cloned() {
-            let cwd = self.config.cwd.to_path_buf();
-            items.push(SelectionItem {
-                name: "Back to plugins".to_string(),
-                description: Some("Return to the plugin list".to_string()),
-                selected_description: Some("Return to the plugin list".to_string()),
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::OpenPluginsList {
-                        cwd: cwd.clone(),
-                        response: plugins_response.clone(),
-                    });
-                })],
-                ..Default::default()
-            });
+        if let Some(plugins_response) = plugins_response {
+            items.push(self.back_to_plugins_item(plugins_response.clone()));
         }
 
         SelectionViewParams {
@@ -978,20 +959,7 @@ impl ChatWidget {
             );
         }
 
-        let cwd = self.config.cwd.to_path_buf();
-        let plugins_response = plugins_response.clone();
-        let mut items = vec![SelectionItem {
-            name: "Back to plugins".to_string(),
-            description: Some("Return to the plugin list".to_string()),
-            selected_description: Some("Return to the plugin list".to_string()),
-            actions: vec![Box::new(move |tx| {
-                tx.send(AppEvent::OpenPluginsList {
-                    cwd: cwd.clone(),
-                    response: plugins_response.clone(),
-                });
-            })],
-            ..Default::default()
-        }];
+        let mut items = vec![self.back_to_plugins_item(plugins_response.clone())];
 
         if plugin.summary.installed {
             if plugin.summary.install_policy == PluginInstallPolicy::InstalledByDefault {
