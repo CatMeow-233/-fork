@@ -207,20 +207,10 @@ impl SpendControlLimitSnapshotDisplay {
     }
 }
 
-/// Builds display rows from a snapshot and marks stale data by capture age.
+/// Builds display rows from snapshots and marks stale data by capture age.
 ///
 /// Callers should pass `Local::now()` for `now` at render time; using a cached timestamp can make
 /// fresh data appear stale or prevent stale warnings from appearing.
-pub(crate) fn compose_rate_limit_data(
-    snapshot: Option<&RateLimitSnapshotDisplay>,
-    now: DateTime<Local>,
-) -> StatusRateLimitData {
-    match snapshot {
-        Some(snapshot) => compose_rate_limit_data_many(std::slice::from_ref(snapshot), now),
-        None => StatusRateLimitData::Missing,
-    }
-}
-
 pub(crate) fn compose_rate_limit_data_many(
     snapshots: &[RateLimitSnapshotDisplay],
     now: DateTime<Local>,

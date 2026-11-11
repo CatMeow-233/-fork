@@ -41,7 +41,6 @@ use super::rate_limits::RateLimitSnapshotDisplay;
 use super::rate_limits::StatusRateLimitData;
 use super::rate_limits::StatusRateLimitRow;
 use super::rate_limits::StatusRateLimitValue;
-use super::rate_limits::compose_rate_limit_data;
 use super::rate_limits::compose_rate_limit_data_many;
 use super::rate_limits::format_status_limit_summary;
 use super::rate_limits::render_status_limit_progress_bar;
@@ -101,11 +100,7 @@ impl StatusHistoryHandle {
         rate_limits: &[RateLimitSnapshotDisplay],
         now: DateTime<Local>,
     ) {
-        let rate_limits = if rate_limits.len() <= 1 {
-            compose_rate_limit_data(rate_limits.first(), now)
-        } else {
-            compose_rate_limit_data_many(rate_limits, now)
-        };
+        let rate_limits = compose_rate_limit_data_many(rate_limits, now);
         #[expect(clippy::expect_used)]
         let mut state = self
             .card
@@ -393,11 +388,7 @@ impl StatusHistoryCell {
             output: total_usage.output_tokens,
             context_window,
         };
-        let rate_limits = if rate_limits.len() <= 1 {
-            compose_rate_limit_data(rate_limits.first(), now)
-        } else {
-            compose_rate_limit_data_many(rate_limits, now)
-        };
+        let rate_limits = compose_rate_limit_data_many(rate_limits, now);
         let rate_limit_state = Arc::new(RwLock::new(StatusRateLimitState {
             rate_limits,
             refreshing_rate_limits,
