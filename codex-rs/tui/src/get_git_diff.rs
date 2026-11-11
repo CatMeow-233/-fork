@@ -22,6 +22,15 @@ const DISABLE_HOOKS_CONFIG: &str = if cfg!(windows) {
     "core.hooksPath=/dev/null"
 };
 const EXECUTABLE_FILTER_CONFIG_PATTERN: &str = r"^filter\..*\.(clean|process)$";
+/// Diff flags shared by the tracked and untracked diffs, so neither runs textconv or ext-diff.
+const DIFF_ARGS: [&str; 6] = [
+    "diff",
+    "--no-textconv",
+    "--no-ext-diff",
+    "--submodule=short",
+    "--ignore-submodules=dirty",
+    "--color",
+];
 
 // `/diff` may execute Git through a remote workspace, so git-utils owns the
 // probe policy while this adapter keeps command execution in the TUI layer.
@@ -64,20 +73,7 @@ pub(crate) async fn get_git_diff(
     // Keep `/diff` informational: repository configuration must not select executable diff helpers.
     let diff_config_overrides = diff_filter_config_overrides(runner, cwd, fsmonitor).await?;
     let (tracked_diff_res, untracked_output_res) = tokio::join!(
-        run_git_capture_diff(
-            runner,
-            cwd,
-            fsmonitor,
-            &diff_config_overrides,
-            &[
-                "diff",
-                "--no-textconv",
-                "--no-ext-diff",
-                "--submodule=short",
-                "--ignore-submodules=dirty",
-                "--color",
-            ]
-        ),
+        run_git_capture_diff(runner, cwd, fsmonitor, &diff_config_overrides, &DIFF_ARGS),
         run_git_capture_stdout(
             runner,
             cwd,
@@ -89,30 +85,13 @@ pub(crate) async fn get_git_diff(
     let untracked_output = untracked_output_res?;
 
     let mut untracked_diff = String::new();
-    let null_device: &Path = if cfg!(windows) {
-        Path::new("NUL")
-    } else {
-        Path::new("/dev/null")
-    };
-
-    let null_path = null_device.to_str().unwrap_or("/dev/null");
+    let null_path = if cfg!(windows) { "NUL" } else { "/dev/null" };
     for file in untracked_output
         .split('\n')
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        let args = [
-            "diff",
-            "--no-textconv",
-            "--no-ext-diff",
-            "--submodule=short",
-            "--ignore-submodules=dirty",
-            "--color",
-            "--no-index",
-            "--",
-            null_path,
-            file,
-        ];
+        let args = [&DIFF_ARGS[..], &["--no-index", "--", null_path, file]].concat();
         let diff =
             run_git_capture_diff(runner, cwd, fsmonitor, &diff_config_overrides, &args).await?;
         untracked_diff.push_str(&diff);
