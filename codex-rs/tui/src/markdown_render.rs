@@ -1429,29 +1429,7 @@ impl<'a, 'policy> Writer<'a, 'policy> {
             if i > 0 {
                 self.push_table_cell_hard_break();
             }
-            self.push_text_spans_to_table_cell(line, style);
-        }
-    }
-
-    fn push_text_spans_to_table_cell(&mut self, text: &str, style: Style) {
-        let span = self.style_link_label(Span::styled(text.to_string(), style));
-        let destination = self
-            .link
-            .as_ref()
-            .and_then(|link| web_destination(&link.destination));
-        let mut annotated = if let Some(destination) = destination {
-            let mut annotated = HyperlinkLine::new(Line::default());
-            annotated.push_span(span, Some(&destination));
-            annotated
-        } else if self.link.is_some() || self.in_code_block {
-            HyperlinkLine::new(Line::from(span))
-        } else {
-            style_bare_web_urls(span, self.styles.link)
-        };
-        if let Some(table_state) = self.table_state.as_mut()
-            && let Some(cell) = table_state.current_cell.as_mut()
-        {
-            cell.push_annotated(std::mem::take(&mut annotated), &self.copy_inline);
+            self.push_text_spans(line, style);
         }
     }
 
@@ -2268,94 +2246,62 @@ impl<'a, 'policy> Writer<'a, 'policy> {
     }
 
     fn pop_link(&mut self) {
-        if let Some(link) = self.link.take() {
-            if link.style_label {
-                self.pop_inline_style();
+        let Some(link) = self.link.take() else {
+            return;
+        };
+        if link.style_label {
+            self.pop_inline_style();
+        }
+        if link.show_destination
+            || (!link.has_visible_label && web_destination(&link.destination).is_some())
+        {
+            // Link destinations are rendered as " (url)" suffixes. When parsing table cells,
+            // append the suffix into the active cell buffer rather than the outer paragraph
+            // line to avoid detached url lines.
+            self.push_inline_span(" (".into());
+            let mut destination = HyperlinkLine::new(Line::default());
+            destination.push_span(
+                Span::styled(link.destination.clone(), self.styles.link),
+                web_destination(&link.destination).as_deref(),
+            );
+            self.push_inline_annotated(destination);
+            self.push_inline_span(")".into());
+        } else if let Some(local_target_display) = link.local_target_display {
+            let show_label = link
+                .local_label_spans
+                .iter()
+                .any(|span| !span.content.trim().is_empty());
+            let style = self
+                .inline_styles
+                .last()
+                .copied()
+                .unwrap_or_default()
+                .patch(self.styles.code);
+            let span = Span::styled(local_target_display, style);
+            let in_table_cell = self.in_table_cell();
+            if !in_table_cell && self.pending_marker_line {
+                self.push_line(Line::default());
             }
-            if link.show_destination
-                || (!link.has_visible_label && web_destination(&link.destination).is_some())
-            {
-                // Link destinations are rendered as " (url)" suffixes. When parsing table cells,
-                // append the suffix into the active cell buffer rather than the outer paragraph
-                // line to avoid detached url lines.
-                if self.in_table_cell() {
-                    self.push_span_to_table_cell(" (".into());
-                    let mut destination = HyperlinkLine::new(Line::default());
-                    destination.push_span(
-                        Span::styled(link.destination.clone(), self.styles.link),
-                        web_destination(&link.destination).as_deref(),
-                    );
-                    if let Some(table_state) = self.table_state.as_mut()
-                        && let Some(cell) = table_state.current_cell.as_mut()
-                    {
-                        cell.push_annotated(destination, &self.copy_inline);
-                    }
-                    self.push_span_to_table_cell(")".into());
-                } else {
-                    self.push_span(" (".into());
-                    let mut destination = HyperlinkLine::new(Line::default());
-                    destination.push_span(
-                        Span::styled(link.destination.clone(), self.styles.link),
-                        web_destination(&link.destination).as_deref(),
-                    );
-                    self.push_annotated(destination);
-                    self.push_span(")".into());
-                }
-            } else if let Some(local_target_display) = link.local_target_display {
-                let show_label = link
+            if show_label {
+                for (label_span, inline) in link
                     .local_label_spans
-                    .iter()
-                    .any(|span| !span.content.trim().is_empty());
-                let style = self
-                    .inline_styles
-                    .last()
-                    .copied()
-                    .unwrap_or_default()
-                    .patch(self.styles.code);
-                let span = Span::styled(local_target_display, style);
-                if self.in_table_cell() {
-                    if show_label {
-                        for (label_span, inline) in link
-                            .local_label_spans
-                            .into_iter()
-                            .zip(link.local_label_inline)
-                        {
-                            let previous = std::mem::replace(&mut self.copy_inline, inline);
-                            self.push_span_to_table_cell(label_span);
-                            self.copy_inline = previous;
-                        }
-                        self.push_span_to_table_cell(" (".into());
-                    }
-                    self.copy_inline.push(crate::markdown_copy::Inline::Literal);
-                    self.push_span_to_table_cell(span);
-                    self.copy_inline.pop();
-                    if show_label {
-                        self.push_span_to_table_cell(")".into());
-                    }
-                } else {
-                    if self.pending_marker_line {
-                        self.push_line(Line::default());
-                    }
-                    if show_label {
-                        for (label_span, inline) in link
-                            .local_label_spans
-                            .into_iter()
-                            .zip(link.local_label_inline)
-                        {
-                            let previous = std::mem::replace(&mut self.copy_inline, inline);
-                            self.push_span(label_span);
-                            self.copy_inline = previous;
-                        }
-                        self.push_span(" (".into());
-                    }
-                    self.copy_inline.push(crate::markdown_copy::Inline::Literal);
-                    self.push_span(span);
-                    self.copy_inline.pop();
-                    if show_label {
-                        self.push_span(")".into());
-                    }
-                    self.line_ends_with_local_link_target = true;
+                    .into_iter()
+                    .zip(link.local_label_inline)
+                {
+                    let previous = std::mem::replace(&mut self.copy_inline, inline);
+                    self.push_inline_span(label_span);
+                    self.copy_inline = previous;
                 }
+                self.push_inline_span(" (".into());
+            }
+            self.copy_inline.push(crate::markdown_copy::Inline::Literal);
+            self.push_inline_span(span);
+            self.copy_inline.pop();
+            if show_label {
+                self.push_inline_span(")".into());
+            }
+            if !in_table_cell {
+                self.line_ends_with_local_link_target = true;
             }
         }
     }
@@ -2559,6 +2505,26 @@ impl<'a, 'policy> Writer<'a, 'policy> {
         }
     }
 
+    /// Push a span to the active table cell, or to the current line outside tables.
+    fn push_inline_span(&mut self, span: Span<'static>) {
+        if self.in_table_cell() {
+            self.push_span_to_table_cell(span);
+        } else {
+            self.push_span(span);
+        }
+    }
+
+    /// Push annotated content to the active table cell, or to the current line outside tables.
+    fn push_inline_annotated(&mut self, appended: HyperlinkLine) {
+        if let Some(table_state) = self.table_state.as_mut()
+            && let Some(cell) = table_state.current_cell.as_mut()
+        {
+            cell.push_annotated(appended, &self.copy_inline);
+        } else {
+            self.push_annotated(appended);
+        }
+    }
+
     fn push_text_spans(&mut self, text: &str, style: Style) {
         let span = self.style_link_label(Span::styled(text.to_string(), style));
         let destination = self
@@ -2574,7 +2540,7 @@ impl<'a, 'policy> Writer<'a, 'policy> {
         } else {
             style_bare_web_urls(span, self.styles.link)
         };
-        self.push_annotated(annotated);
+        self.push_inline_annotated(annotated);
     }
 
     fn push_blank_line(&mut self) {
