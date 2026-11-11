@@ -56,32 +56,11 @@ pub async fn run_resume_picker_with_app_server(
     include_non_interactive: bool,
     app_server: AppServerSession,
 ) -> Result<SessionSelection> {
-    run_resume_picker_with_app_servers(
-        uses_remote_filesystem,
-        tui,
-        config,
-        local_settings,
-        show_all,
-        include_non_interactive,
-        ResumePickerAppServers::singleton(app_server),
-    )
-    .await
-}
-
-pub(crate) async fn run_resume_picker_with_app_servers(
-    uses_remote_filesystem: bool,
-    tui: &mut Tui,
-    config: &Config,
-    local_settings: &crate::local_settings::LocalSettings,
-    show_all: bool,
-    include_non_interactive: bool,
-    app_servers: ResumePickerAppServers,
-) -> Result<SessionSelection> {
     let (backends, displayed_owner) = resume_picker_backends(
         uses_remote_filesystem,
         config,
         include_non_interactive,
-        app_servers,
+        ResumePickerAppServers::singleton(app_server),
     );
     run_resume_picker_with_launch_context(
         uses_remote_filesystem,
@@ -91,6 +70,8 @@ pub(crate) async fn run_resume_picker_with_app_servers(
         show_all,
         backends,
         displayed_owner,
+        SessionPickerAction::Resume,
+        ProviderFilter::All,
         SessionPickerLaunchContext::Startup,
     )
     .await
@@ -124,6 +105,8 @@ pub(crate) async fn run_resume_picker_from_existing_session_with_app_servers(
         show_all,
         backends,
         displayed_owner,
+        SessionPickerAction::Resume,
+        ProviderFilter::All,
         SessionPickerLaunchContext::ExistingSession { current_thread_id },
     )
     .await
@@ -141,6 +124,8 @@ async fn run_resume_picker_with_launch_context(
     show_all: bool,
     app_servers: Vec<AppServerPickerBackend>,
     displayed_owner: crate::backend_id::BackendId,
+    action: SessionPickerAction,
+    provider_filter: ProviderFilter,
     launch_context: SessionPickerLaunchContext,
 ) -> Result<SessionSelection> {
     let has_multiple_backends = app_servers.len() > 1;
@@ -165,7 +150,6 @@ async fn run_resume_picker_with_launch_context(
         })
         .flatten();
     let local_filter_cwd = local_picker_cwd_filter(&cwd_filter, uses_remote_filesystem);
-    let provider_filter = ProviderFilter::All;
     let runtime_keymap = picker_runtime_keymap(local_settings)?;
     let options = SessionPickerRunOptions {
         backend_id: app_server.session.backend_id(),
@@ -176,7 +160,7 @@ async fn run_resume_picker_with_launch_context(
         show_all,
         filter_cwd: cwd_filter,
         local_filter_cwd,
-        action: SessionPickerAction::Resume,
+        action,
         launch_context,
         provider_filter,
         initial_density: SessionListDensity::from(
@@ -209,56 +193,24 @@ pub async fn run_fork_picker_with_app_server(
     show_all: bool,
     app_server: AppServerSession,
 ) -> Result<SessionSelection> {
-    let archive_request_handle = app_server.request_handle();
-    let (bg_tx, bg_rx) = mpsc::unbounded_channel();
-    let uses_remote_workspace = app_server.uses_remote_workspace();
-    let cwd_filter = picker_cwd_filter(
-        config.cwd.as_path(),
-        /*show_all*/ false,
-        uses_remote_workspace,
-        app_server.remote_cwd_override(),
-    );
-    let local_filter_cwd = local_picker_cwd_filter(&cwd_filter, uses_remote_filesystem);
     let provider_filter = picker_provider_filter(config, &app_server).await?;
-    let runtime_keymap = picker_runtime_keymap(local_settings)?;
-    let options = SessionPickerRunOptions {
-        backend_id: app_server.backend_id(),
-        use_theme_colors: local_settings.tui.status_line_use_colors,
-        copy_on_select: local_settings.copy_on_select(&codex_terminal_detection::terminal_info()),
-        copy_on_select_clear_selection: local_settings.tui.copy_on_select_clear_selection,
-        mouse_scroll_speed: local_settings.tui.mouse_scroll_speed.unwrap_or(1.0),
-        show_all,
-        filter_cwd: cwd_filter,
-        local_filter_cwd,
-        action: SessionPickerAction::Fork,
-        launch_context: SessionPickerLaunchContext::Startup,
-        provider_filter,
-        initial_density: SessionListDensity::from(
-            local_settings.tui.session_picker_view.unwrap_or_default(),
-        ),
-        view_persistence: Some(SessionPickerViewPersistence {
-            codex_home: local_settings.codex_home.to_path_buf(),
-        }),
-        keymap: runtime_keymap,
-        initial_page_mode: if uses_remote_workspace {
-            PageLoadMode::StoreDefault
-        } else {
-            PageLoadMode::StateDbOnly
-        },
-    };
-    run_session_picker_with_loader(
+    let (backends, displayed_owner) = resume_picker_backends(
+        uses_remote_filesystem,
+        config,
+        /*include_non_interactive*/ false,
+        ResumePickerAppServers::singleton(app_server),
+    );
+    run_resume_picker_with_launch_context(
+        uses_remote_filesystem,
         tui,
-        options,
-        spawn_app_server_page_loader(
-            uses_remote_filesystem,
-            app_server,
-            archive_request_handle,
-            /*include_non_interactive*/ false,
-            raw_reasoning_visibility(config),
-            (!uses_remote_workspace).then(|| config.clone()),
-            bg_tx,
-        ),
-        bg_rx,
+        config,
+        local_settings,
+        show_all,
+        backends,
+        displayed_owner,
+        SessionPickerAction::Fork,
+        provider_filter,
+        SessionPickerLaunchContext::Startup,
     )
     .await
 }

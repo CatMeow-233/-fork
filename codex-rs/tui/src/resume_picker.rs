@@ -107,6 +107,7 @@ use page_loading::PaginationState;
 use app_server_loader::parse_timestamp_str;
 #[cfg(test)]
 use app_server_loader::row_from_app_server_thread;
+#[cfg(test)]
 use app_server_loader::spawn_app_server_page_loader;
 use app_server_loader::spawn_app_server_page_loaders;
 #[cfg(test)]

@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[cfg(test)]
 pub(super) fn spawn_app_server_page_loader(
     uses_remote_filesystem: bool,
     app_server: AppServerSession,
