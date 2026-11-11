@@ -349,26 +349,7 @@ impl SessionHeaderHistoryCell {
     }
 
     pub(crate) fn format_directory_inner(directory: &Path, max_width: Option<usize>) -> String {
-        let formatted = if let Some(rel) = relativize_to_home(directory) {
-            if rel.as_os_str().is_empty() {
-                "~".to_string()
-            } else {
-                format!("~{}{}", std::path::MAIN_SEPARATOR, rel.display())
-            }
-        } else {
-            directory.display().to_string()
-        };
-
-        if let Some(max_width) = max_width {
-            if max_width == 0 {
-                return String::new();
-            }
-            if display_width(formatted.as_str()) > max_width {
-                return crate::text_formatting::center_truncate_path(&formatted, max_width);
-            }
-        }
-
-        formatted
+        crate::status::format_directory_display(directory, max_width)
     }
 
     fn reasoning_label(&self) -> Option<&str> {
