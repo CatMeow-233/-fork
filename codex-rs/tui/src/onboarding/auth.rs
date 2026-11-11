@@ -604,74 +604,35 @@ impl AuthModeWidget {
         } else {
             "Usage included with Plus, Pro, Business, and Enterprise plans"
         };
-        let device_code_description = "Sign in from another device with a one-time code";
+        let other_methods_description =
+            if self.bedrock_setup_enabled || self.gcp_setup_enabled || self.gateway_setup_enabled {
+                "Use an API key or another provider"
+            } else {
+                "Use an OpenAI API key"
+            };
 
         for (idx, option) in self.displayed_sign_in_options().into_iter().enumerate() {
-            match option {
-                SignInOption::OtherMethods => {
-                    lines.extend(create_mode_item(
-                        idx,
-                        option,
-                        "Sign in another way",
-                        if self.bedrock_setup_enabled
-                            || self.gcp_setup_enabled
-                            || self.gateway_setup_enabled
-                        {
-                            "Use an API key or another provider"
-                        } else {
-                            "Use an OpenAI API key"
-                        },
-                    ));
-                }
-                SignInOption::ChatGpt => {
-                    lines.extend(create_mode_item(
-                        idx,
-                        option,
-                        "Sign in with ChatGPT",
-                        chatgpt_description,
-                    ));
-                }
-                SignInOption::DeviceCode => {
-                    lines.extend(create_mode_item(
-                        idx,
-                        option,
-                        "Sign in with Device Code",
-                        device_code_description,
-                    ));
-                }
-                SignInOption::ApiKey => {
-                    lines.extend(create_mode_item(
-                        idx,
-                        option,
-                        "Use an OpenAI API key",
-                        "Pay for what you use",
-                    ));
-                }
+            let (text, description) = match option {
+                SignInOption::OtherMethods => ("Sign in another way", other_methods_description),
+                SignInOption::ChatGpt => ("Sign in with ChatGPT", chatgpt_description),
+                SignInOption::DeviceCode => (
+                    "Sign in with Device Code",
+                    "Sign in from another device with a one-time code",
+                ),
+                SignInOption::ApiKey => ("Use an OpenAI API key", "Pay for what you use"),
                 SignInOption::Bedrock => {
-                    lines.extend(create_mode_item(
-                        idx,
-                        option,
-                        "Use Amazon Bedrock",
-                        "Connect using your AWS credentials",
-                    ));
+                    ("Use Amazon Bedrock", "Connect using your AWS credentials")
                 }
-                SignInOption::Gcp => {
-                    lines.extend(create_mode_item(
-                        idx,
-                        option,
-                        "Use Google Cloud Vertex AI",
-                        "Connect using your Google Cloud credentials",
-                    ));
-                }
-                SignInOption::Gateway => {
-                    lines.extend(create_mode_item(
-                        idx,
-                        option,
-                        USE_CUSTOM_PROVIDER,
-                        "Choose a saved configuration or create a new one",
-                    ));
-                }
-            }
+                SignInOption::Gcp => (
+                    "Use Google Cloud Vertex AI",
+                    "Connect using your Google Cloud credentials",
+                ),
+                SignInOption::Gateway => (
+                    USE_CUSTOM_PROVIDER,
+                    "Choose a saved configuration or create a new one",
+                ),
+            };
+            lines.extend(create_mode_item(idx, option, text, description));
             lines.push("".into());
         }
 
