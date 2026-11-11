@@ -343,15 +343,21 @@ impl ChatComposer {
             return Some(InputResult::None);
         }
         self.stage_slash_command_history(&command);
+        Some(self.dispatch_slash_command(command))
+    }
+
+    /// Turn a slash command into its input result, clearing the draft unless the command
+    /// validates it at dispatch time.
+    pub(super) fn dispatch_slash_command(&mut self, command: SlashCommandItem) -> InputResult {
         if !matches!(command, SlashCommandItem::Builtin(cmd) if cmd.requires_dispatch_validation())
         {
             self.draft.textarea.set_text_clearing_elements("");
             self.draft.is_bash_mode = false;
         }
-        Some(match command {
+        match command {
             SlashCommandItem::Builtin(cmd) => InputResult::Command(cmd),
             SlashCommandItem::ServiceTier(command) => InputResult::ServiceTierCommand(command),
-        })
+        }
     }
 
     /// Check if the input is a slash command with args (e.g., /review args) and dispatch it.

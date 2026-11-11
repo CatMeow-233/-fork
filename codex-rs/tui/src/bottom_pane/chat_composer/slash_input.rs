@@ -294,13 +294,9 @@ impl ChatComposer {
                 let selected_item = popup.selected_item();
                 let has_selectable_item = selected_item.is_some();
                 if let Some(selected_cmd) = selected_item {
-                    if selected_command_dispatches_immediately_on_tab(&selected_cmd)
-                        && let CommandItem::Builtin(cmd) = &selected_cmd
-                    {
+                    if selected_command_dispatches_immediately_on_tab(&selected_cmd) {
                         self.stage_selected_slash_command_history(&selected_cmd);
-                        self.draft.textarea.set_text_clearing_elements("");
-                        self.draft.is_bash_mode = false;
-                        return (InputResult::Command(*cmd), true);
+                        return (self.dispatch_slash_command(selected_cmd), true);
                     }
 
                     if self
@@ -401,20 +397,7 @@ impl ChatComposer {
                     }
 
                     self.stage_selected_slash_command_history(&sel);
-                    if !matches!(sel, CommandItem::Builtin(cmd) if cmd.requires_dispatch_validation())
-                    {
-                        self.draft.textarea.set_text_clearing_elements("");
-                        self.draft.is_bash_mode = false;
-                    }
-                    return (
-                        match sel {
-                            CommandItem::Builtin(cmd) => InputResult::Command(cmd),
-                            CommandItem::ServiceTier(command) => {
-                                InputResult::ServiceTierCommand(command)
-                            }
-                        },
-                        true,
-                    );
+                    return (self.dispatch_slash_command(sel), true);
                 }
                 // Fallback to default newline handling if no command selected.
                 self.handle_key_event_without_popup(key_event)

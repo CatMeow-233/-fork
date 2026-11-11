@@ -12,7 +12,7 @@ use super::selection_popup_common::measure_rows_height_with_col_width_mode;
 use super::selection_popup_common::render_rows_with_col_width_mode;
 use super::slash_commands::BuiltinCommandFlags;
 use super::slash_commands::ServiceTierCommand;
-use super::slash_commands::SlashCommandItem;
+pub(crate) use super::slash_commands::SlashCommandItem as CommandItem;
 use super::slash_commands::commands_for_input;
 use crate::slash_command::SlashCommand;
 
@@ -24,13 +24,6 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
     ColumnWidthMode::AutoAllRows,
     /*name_column_width*/ None,
 );
-
-/// A selectable item in the popup.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CommandItem {
-    Builtin(SlashCommand),
-    ServiceTier(ServiceTierCommand),
-}
 
 pub(crate) struct CommandPopup {
     command_filter: String,
@@ -87,11 +80,11 @@ impl CommandPopup {
             &service_tier_commands,
         )
         .into_iter()
-        .filter_map(|command| match command {
-            SlashCommandItem::Builtin(cmd) => (!cmd.command().starts_with("debug")
-                && cmd != SlashCommand::Apps)
-                .then_some(CommandItem::Builtin(cmd)),
-            SlashCommandItem::ServiceTier(command) => Some(CommandItem::ServiceTier(command)),
+        .filter(|command| match command {
+            CommandItem::Builtin(cmd) => {
+                !cmd.command().starts_with("debug") && *cmd != SlashCommand::Apps
+            }
+            CommandItem::ServiceTier(_) => true,
         })
         .collect();
         Self {
@@ -289,27 +282,7 @@ impl CommandPopup {
     }
 
     fn is_unavailable(&self, item: &CommandItem) -> bool {
-        self.side_conversation_active
-            && match item {
-                CommandItem::Builtin(cmd) => !cmd.available_in_side_conversation(),
-                CommandItem::ServiceTier(_) => true,
-            }
-    }
-}
-
-impl CommandItem {
-    pub(crate) fn command(&self) -> &str {
-        match self {
-            Self::Builtin(cmd) => cmd.command(),
-            Self::ServiceTier(command) => &command.name,
-        }
-    }
-
-    fn description(&self) -> &str {
-        match self {
-            Self::Builtin(cmd) => cmd.description(),
-            Self::ServiceTier(command) => &command.description,
-        }
+        self.side_conversation_active && !item.available_in_side_conversation()
     }
 }
 

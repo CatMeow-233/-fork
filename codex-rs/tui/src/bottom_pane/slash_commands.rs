@@ -31,6 +31,13 @@ impl SlashCommandItem {
         }
     }
 
+    pub(crate) fn description(&self) -> &str {
+        match self {
+            Self::Builtin(cmd) => cmd.description(),
+            Self::ServiceTier(command) => &command.description,
+        }
+    }
+
     pub(crate) fn supports_inline_args(&self) -> bool {
         match self {
             Self::Builtin(cmd) => cmd.supports_inline_args(),
