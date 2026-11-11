@@ -305,13 +305,7 @@ impl ChatWidget {
             network_approval_context: ev.network_approval_context,
             additional_permissions: ev.additional_permissions,
         });
-        self.bottom_pane
-            .push_approval_request(request, &self.config.features);
-        self.set_ambient_pet_notification(
-            crate::pets::PetNotificationKind::Waiting,
-            /*body*/ None,
-        );
-        self.request_redraw();
+        self.push_approval_request(request);
     }
 
     pub(crate) fn handle_apply_patch_approval_now(&mut self, ev: ApplyPatchApprovalRequestEvent) {
@@ -326,13 +320,7 @@ impl ChatWidget {
             changes: ev.changes,
             cwd: self.config.cwd.clone(),
         });
-        self.bottom_pane
-            .push_approval_request(request, &self.config.features);
-        self.set_ambient_pet_notification(
-            crate::pets::PetNotificationKind::Waiting,
-            /*body*/ None,
-        );
-        self.request_redraw();
+        self.push_approval_request(request);
         self.notify(Notification::EditApprovalRequested {
             cwd: self.config.cwd.to_path_buf(),
             changes: changed_paths,
@@ -480,12 +468,6 @@ impl ChatWidget {
             reason: ev.reason,
             permissions: ev.permissions,
         });
-        self.bottom_pane
-            .push_approval_request(request, &self.config.features);
-        self.set_ambient_pet_notification(
-            crate::pets::PetNotificationKind::Waiting,
-            /*body*/ None,
-        );
-        self.request_redraw();
+        self.push_approval_request(request);
     }
 }
