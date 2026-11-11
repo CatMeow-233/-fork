@@ -7,6 +7,7 @@
 use super::session_lifecycle::ThreadAttachPresentation;
 use super::*;
 use crate::app_event::ThreadTitleDestination;
+use crate::approval_events::ExecApprovalRequestEvent;
 use crate::chatwidget::ThreadInputStateRestoreMode;
 use codex_app_server_protocol::ThreadStartedNotification;
 use codex_app_server_protocol::TurnInterruptParams;
@@ -328,7 +329,7 @@ impl App {
                         .unwrap_or_default(),
                     reason: params.reason.clone(),
                     available_decisions: params.available_decisions.clone().unwrap_or_else(|| {
-                        default_exec_approval_decisions(
+                        ExecApprovalRequestEvent::default_available_decisions(
                             network_approval_context.as_ref(),
                             proposed_execpolicy_amendment.as_ref(),
                             proposed_network_policy_amendments.as_deref(),
