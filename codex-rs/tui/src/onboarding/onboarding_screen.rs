@@ -22,6 +22,7 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
+use itertools::Itertools;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Widget;
@@ -240,34 +241,21 @@ impl OnboardingScreen {
         }
     }
 
+    /// Visible steps up to and including the one in progress.
     fn current_steps_mut(&mut self) -> Vec<&mut Step> {
-        let mut out: Vec<&mut Step> = Vec::new();
-        for step in self.steps.iter_mut() {
-            match step.get_step_state() {
-                StepState::Hidden => continue,
-                StepState::Complete => out.push(step),
-                StepState::InProgress => {
-                    out.push(step);
-                    break;
-                }
-            }
-        }
-        out
+        self.steps
+            .iter_mut()
+            .filter(|step| step.get_step_state() != StepState::Hidden)
+            .take_while_inclusive(|step| step.get_step_state() != StepState::InProgress)
+            .collect()
     }
 
     fn current_steps(&self) -> Vec<&Step> {
-        let mut out: Vec<&Step> = Vec::new();
-        for step in self.steps.iter() {
-            match step.get_step_state() {
-                StepState::Hidden => continue,
-                StepState::Complete => out.push(step),
-                StepState::InProgress => {
-                    out.push(step);
-                    break;
-                }
-            }
-        }
-        out
+        self.steps
+            .iter()
+            .filter(|step| step.get_step_state() != StepState::Hidden)
+            .take_while_inclusive(|step| step.get_step_state() != StepState::InProgress)
+            .collect()
     }
 
     fn should_suppress_animations(&self) -> bool {
@@ -466,35 +454,21 @@ impl WidgetRef for &OnboardingScreen {
 
         // Helper to scan a temporary buffer and return number of used rows.
         fn used_rows(tmp: &Buffer, width: u16, height: u16) -> u16 {
-            if width == 0 || height == 0 {
-                return 0;
-            }
-            let mut last_non_empty: Option<u16> = None;
-            for yy in 0..height {
-                let mut any = false;
-                for xx in 0..width {
-                    let cell = &tmp[(xx, yy)];
-                    let has_symbol = !cell.symbol().trim().is_empty();
-                    let has_style = cell.fg != Color::Reset
-                        || cell.bg != Color::Reset
-                        || !cell.modifier.is_empty();
-                    if has_symbol || has_style {
-                        any = true;
-                        break;
-                    }
-                }
-                if any {
-                    last_non_empty = Some(yy);
-                }
-            }
-            last_non_empty.map(|v| v + 2).unwrap_or(0)
+            (0..height)
+                .rev()
+                .find(|&y| {
+                    (0..width).any(|x| {
+                        let cell = &tmp[(x, y)];
+                        !cell.symbol().trim().is_empty()
+                            || cell.fg != Color::Reset
+                            || cell.bg != Color::Reset
+                            || !cell.modifier.is_empty()
+                    })
+                })
+                .map_or(0, |last_non_empty| last_non_empty + 2)
         }
 
-        let mut i = 0usize;
-        let current_steps = self.current_steps();
-
-        while i < current_steps.len() && y < bottom {
-            let step = &current_steps[i];
+        for step in self.current_steps() {
             let max_h = bottom.saturating_sub(y);
             if max_h == 0 || width == 0 {
                 break;
@@ -517,7 +491,6 @@ impl WidgetRef for &OnboardingScreen {
                 step.render_ref(target, buf);
                 y = y.saturating_add(h);
             }
-            i += 1;
         }
     }
 }
