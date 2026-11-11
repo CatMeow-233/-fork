@@ -114,6 +114,24 @@ impl CompositeHistoryCell {
     pub(crate) fn new(parts: Vec<Box<dyn HistoryCell>>) -> Self {
         Self { parts }
     }
+
+    /// Concatenates each part's non-empty lines, separating parts with one blank line.
+    fn join_parts<T: From<&'static str>>(
+        &self,
+        render: impl Fn(&dyn HistoryCell) -> Vec<T>,
+    ) -> Vec<T> {
+        let mut out = Vec::new();
+        for lines in self.parts.iter().map(|part| render(part.as_ref())) {
+            if lines.is_empty() {
+                continue;
+            }
+            if !out.is_empty() {
+                out.push(T::from(""));
+            }
+            out.extend(lines);
+        }
+        out
+    }
 }
 
 impl HistoryCell for CompositeHistoryCell {
@@ -125,17 +143,7 @@ impl HistoryCell for CompositeHistoryCell {
     }
 
     fn live_raw_lines(&self) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-        for part in &self.parts {
-            let part = part.live_raw_lines();
-            if !part.is_empty() {
-                if !lines.is_empty() {
-                    lines.push(Line::default());
-                }
-                lines.extend(part);
-            }
-        }
-        lines
+        self.join_parts(HistoryCell::live_raw_lines)
     }
 
     fn warning_keys(&self) -> Vec<WarningKey<'_>> {
@@ -146,81 +154,23 @@ impl HistoryCell for CompositeHistoryCell {
     }
 
     fn compact_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-        let mut out = Vec::new();
-        for part in &self.parts {
-            let lines = part.compact_hyperlink_lines(width);
-            if !lines.is_empty() {
-                if !out.is_empty() {
-                    out.push(HyperlinkLine::from(""));
-                }
-                out.extend(lines);
-            }
-        }
-        out
+        self.join_parts(|part| part.compact_hyperlink_lines(width))
     }
 
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let mut out: Vec<Line<'static>> = Vec::new();
-        let mut first = true;
-        for part in &self.parts {
-            let mut lines = part.display_lines(width);
-            if !lines.is_empty() {
-                if !first {
-                    out.push(Line::from(""));
-                }
-                out.append(&mut lines);
-                first = false;
-            }
-        }
-        out
+        self.join_parts(|part| part.display_lines(width))
     }
 
     fn display_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-        let mut out = Vec::new();
-        let mut first = true;
-        for part in &self.parts {
-            let mut lines = part.display_hyperlink_lines(width);
-            if !lines.is_empty() {
-                if !first {
-                    out.push(HyperlinkLine::from(""));
-                }
-                out.append(&mut lines);
-                first = false;
-            }
-        }
-        out
+        self.join_parts(|part| part.display_hyperlink_lines(width))
     }
 
     fn transcript_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
-        let mut out = Vec::new();
-        let mut first = true;
-        for part in &self.parts {
-            let mut lines = part.transcript_hyperlink_lines(width);
-            if !lines.is_empty() {
-                if !first {
-                    out.push(HyperlinkLine::from(""));
-                }
-                out.append(&mut lines);
-                first = false;
-            }
-        }
-        out
+        self.join_parts(|part| part.transcript_hyperlink_lines(width))
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
-        let mut out: Vec<Line<'static>> = Vec::new();
-        let mut first = true;
-        for part in &self.parts {
-            let mut lines = part.raw_lines();
-            if !lines.is_empty() {
-                if !first {
-                    out.push(Line::from(""));
-                }
-                out.append(&mut lines);
-                first = false;
-            }
-        }
-        out
+        self.join_parts(HistoryCell::raw_lines)
     }
 
     fn has_stable_transcript_height(&self) -> bool {
