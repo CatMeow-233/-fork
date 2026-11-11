@@ -1207,14 +1207,9 @@ pub async fn run_main(
         ))
         .await
         {
-            Err(err) if startup_draft::StartupCancelled::matches(&err) => Ok(AppExitInfo {
-                token_usage: TokenUsage::default(),
-                thread_id: None,
-                resume_hint: None,
-                disconnect_info: None,
-                update_action: None,
-                exit_reason: ExitReason::UserRequested,
-            }),
+            Err(err) if startup_draft::StartupCancelled::matches(&err) => {
+                Ok(AppExitInfo::user_requested())
+            }
             Err(err) => {
                 restore_terminal_before_fatal_exit();
                 Err(err)
@@ -1298,12 +1293,8 @@ async fn run_ratatui_app(
                     terminal_restore_guard.restore()?;
                     launch_telemetry.record("update_requested");
                     return Ok(AppExitInfo {
-                        token_usage: crate::token_usage::TokenUsage::default(),
-                        thread_id: None,
-                        resume_hint: None,
-                        disconnect_info: None,
                         update_action: Some(action),
-                        exit_reason: ExitReason::UserRequested,
+                        ..AppExitInfo::user_requested()
                     });
                 }
             }
@@ -1491,14 +1482,7 @@ async fn run_ratatui_app(
         if onboarding_result.should_exit {
             shutdown_startup_session(app_server.take(), &mut terminal_restore_guard).await;
             let _ = tui.terminal.clear();
-            return Ok(AppExitInfo {
-                token_usage: crate::token_usage::TokenUsage::default(),
-                thread_id: None,
-                resume_hint: None,
-                disconnect_info: None,
-                update_action: None,
-                exit_reason: ExitReason::UserRequested,
-            });
+            return Ok(AppExitInfo::user_requested());
         }
         #[cfg(target_os = "windows")]
         {
@@ -1624,16 +1608,9 @@ async fn run_ratatui_app(
             terminal_restore_guard.restore_silently();
             session_log::log_session_end();
             let _ = tui.terminal.clear();
-            Ok(AppExitInfo {
-                token_usage: crate::token_usage::TokenUsage::default(),
-                thread_id: None,
-                resume_hint: None,
-                disconnect_info: None,
-                update_action: None,
-                exit_reason: ExitReason::Fatal(format!(
-                    "No saved session found with ID {id_str}. Run `codex {action}` without an ID to choose from existing sessions."
-                )),
-            })
+            Ok(AppExitInfo::fatal(format!(
+                "No saved session found with ID {id_str}. Run `codex {action}` without an ID to choose from existing sessions."
+            )))
         };
 
     crate::markdown_render::preferences::init(config.tui_rendering);
@@ -1741,14 +1718,7 @@ async fn run_ratatui_app(
                 resume_picker::SessionSelection::Exit => {
                     terminal_restore_guard.restore_silently();
                     session_log::log_session_end();
-                    return Ok(AppExitInfo {
-                        token_usage: crate::token_usage::TokenUsage::default(),
-                        thread_id: None,
-                        resume_hint: None,
-                        disconnect_info: None,
-                        update_action: None,
-                        exit_reason: ExitReason::UserRequested,
-                    });
+                    return Ok(AppExitInfo::user_requested());
                 }
                 other => other,
             }
@@ -1845,14 +1815,7 @@ async fn run_ratatui_app(
             resume_picker::SessionSelection::Exit => {
                 terminal_restore_guard.restore_silently();
                 session_log::log_session_end();
-                return Ok(AppExitInfo {
-                    token_usage: crate::token_usage::TokenUsage::default(),
-                    thread_id: None,
-                    resume_hint: None,
-                    disconnect_info: None,
-                    update_action: None,
-                    exit_reason: ExitReason::UserRequested,
-                });
+                return Ok(AppExitInfo::user_requested());
             }
             other => other,
         }
@@ -1896,14 +1859,7 @@ async fn run_ratatui_app(
         Ok(ResolveCwdOutcome::Exit) => {
             terminal_restore_guard.restore_silently();
             session_log::log_session_end();
-            return Ok(AppExitInfo {
-                token_usage: crate::token_usage::TokenUsage::default(),
-                thread_id: None,
-                resume_hint: None,
-                disconnect_info: None,
-                update_action: None,
-                exit_reason: ExitReason::UserRequested,
-            });
+            return Ok(AppExitInfo::user_requested());
         }
         Err(err) => {
             terminal_restore_guard.restore_silently();

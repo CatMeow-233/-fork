@@ -437,14 +437,21 @@ pub struct AppExitInfo {
 }
 
 impl AppExitInfo {
-    pub fn fatal(message: impl Into<String>) -> Self {
+    pub(crate) fn user_requested() -> Self {
         Self {
             token_usage: TokenUsage::default(),
             thread_id: None,
             resume_hint: None,
             disconnect_info: None,
             update_action: None,
+            exit_reason: ExitReason::UserRequested,
+        }
+    }
+
+    pub fn fatal(message: impl Into<String>) -> Self {
+        Self {
             exit_reason: ExitReason::Fatal(message.into()),
+            ..Self::user_requested()
         }
     }
 }
