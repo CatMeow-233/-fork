@@ -3,18 +3,28 @@
 use super::*;
 
 impl ChatComposer {
-    #[inline]
-    fn clamp_to_char_boundary(text: &str, pos: usize) -> usize {
-        let mut p = pos.min(text.len());
-        if p < text.len() && !text.is_char_boundary(p) {
-            p = text
-                .char_indices()
-                .map(|(i, _)| i)
-                .take_while(|&i| i <= p)
-                .last()
-                .unwrap_or(0);
+    /// Starts a paste burst whose first `retro_chars` were already inserted before the cursor.
+    ///
+    /// When that prefix looks paste-like, it moves from the textarea into the burst buffer and
+    /// `ch` is buffered after it, returning true. Otherwise returns false so the caller inserts
+    /// `ch` normally.
+    fn begin_paste_burst_buffer(&mut self, ch: char, retro_chars: u16, now: Instant) -> bool {
+        // Slice at a char boundary so `start_byte..cursor` is always valid UTF-8.
+        let text = self.draft.textarea.text();
+        let before = &text[..text.floor_char_boundary(self.draft.textarea.cursor())];
+        let Some(grab) =
+            self.draft
+                .paste_burst
+                .decide_begin_buffer(now, before, usize::from(retro_chars))
+        else {
+            return false;
+        };
+        if grab.grabbed.is_empty() || self.draft.textarea.retract_paste_burst(grab.start_byte) {
+            self.draft.paste_burst.append_char_to_buffer(ch, now);
+            return true;
         }
-        p
+        self.draft.paste_burst.clear_after_explicit_paste();
+        false
     }
 
     /// Handle non-ASCII character input (often IME) while still supporting paste-burst detection.
@@ -67,25 +77,10 @@ impl ChatComposer {
                         // For non-ASCII we inserted prior chars immediately, so if this turns out
                         // to be paste-like we need to retroactively grab & remove the already-
                         // inserted prefix from the textarea before buffering the burst.
-                        let cur = self.draft.textarea.cursor();
-                        let txt = self.draft.textarea.text();
-                        let safe_cur = Self::clamp_to_char_boundary(txt, cur);
-                        let before = &txt[..safe_cur];
-                        if let Some(grab) = self.draft.paste_burst.decide_begin_buffer(
-                            now,
-                            before,
-                            retro_chars as usize,
-                        ) {
-                            if grab.grabbed.is_empty()
-                                || self.draft.textarea.retract_paste_burst(grab.start_byte)
-                            {
-                                self.draft.paste_burst.append_char_to_buffer(ch, now);
-                                return (InputResult::None, true);
-                            }
-                            self.draft.paste_burst.clear_after_explicit_paste();
+                        if self.begin_paste_burst_buffer(ch, retro_chars, now) {
+                            return (InputResult::None, true);
                         }
-                        // If decide_begin_buffer opted not to start buffering,
-                        // fall through to normal insertion below.
+                        // Otherwise fall through to normal insertion below.
                     }
                     _ => unreachable!("on_plain_char_no_hold returned unexpected variant"),
                 }
@@ -189,25 +184,10 @@ impl ChatComposer {
                         return (InputResult::None, true);
                     }
                     CharDecision::BeginBuffer { retro_chars } => {
-                        let cur = self.draft.textarea.cursor();
-                        let txt = self.draft.textarea.text();
-                        let safe_cur = Self::clamp_to_char_boundary(txt, cur);
-                        let before = &txt[..safe_cur];
-                        if let Some(grab) = self.draft.paste_burst.decide_begin_buffer(
-                            now,
-                            before,
-                            retro_chars as usize,
-                        ) {
-                            if grab.grabbed.is_empty()
-                                || self.draft.textarea.retract_paste_burst(grab.start_byte)
-                            {
-                                self.draft.paste_burst.append_char_to_buffer(ch, now);
-                                return (InputResult::None, true);
-                            }
-                            self.draft.paste_burst.clear_after_explicit_paste();
+                        if self.begin_paste_burst_buffer(ch, retro_chars, now) {
+                            return (InputResult::None, true);
                         }
-                        // If decide_begin_buffer opted not to start buffering,
-                        // fall through to normal insertion below.
+                        // Otherwise fall through to normal insertion below.
                     }
                     CharDecision::BeginBufferFromPending => {
                         // First char was held; now append the current one.
