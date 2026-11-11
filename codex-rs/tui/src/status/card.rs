@@ -458,14 +458,7 @@ impl StatusHistoryCell {
         formatter: &FieldFormatter,
     ) -> Vec<Line<'static>> {
         match &state.rate_limits {
-            StatusRateLimitData::Available(rows_data) => {
-                if rows_data.is_empty() {
-                    return vec![formatter.line(
-                        "Limits",
-                        vec![Span::from("not available for this account").dim()],
-                    )];
-                }
-
+            StatusRateLimitData::Available(rows_data) if !rows_data.is_empty() => {
                 self.rate_limit_row_lines(rows_data, available_inner_width, formatter)
             }
             StatusRateLimitData::Stale(rows_data) => {
@@ -482,7 +475,7 @@ impl StatusHistoryCell {
                 ));
                 lines
             }
-            StatusRateLimitData::Unavailable => {
+            StatusRateLimitData::Available(_) | StatusRateLimitData::Unavailable => {
                 vec![formatter.line(
                     "Limits",
                     vec![Span::from("not available for this account").dim()],
@@ -509,6 +502,13 @@ impl StatusHistoryCell {
         formatter: &FieldFormatter,
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::with_capacity(rows.len().saturating_mul(2));
+        let wrapped_continuation = |text: &str| {
+            let wrap_width = formatter.value_width(available_inner_width).max(1);
+            textwrap::wrap(text, textwrap::Options::new(wrap_width).break_words(false))
+                .into_iter()
+                .map(|wrapped| formatter.continuation(vec![Span::from(wrapped.into_owned()).dim()]))
+                .collect::<Vec<_>>()
+        };
 
         for row in rows {
             match &row.value {
@@ -537,45 +537,24 @@ impl StatusHistoryCell {
                     let base_line = Line::from(base_spans.clone());
 
                     if let Some(resets_at) = resets_at.as_ref() {
-                        let resets_span = Span::from(format!("(resets {resets_at})")).dim();
-                        let mut inline_spans = base_spans.clone();
+                        let reset_text = format!("(resets {resets_at})");
+                        let mut inline_spans = base_spans;
                         inline_spans.push(Span::from(" ").dim());
-                        inline_spans.push(resets_span.clone());
+                        inline_spans.push(Span::from(reset_text.clone()).dim());
 
                         if line_width(&Line::from(inline_spans.clone())) <= available_inner_width {
                             lines.push(Line::from(inline_spans));
                         } else {
                             lines.push(base_line);
-                            let reset_text = format!("(resets {resets_at})");
-                            let reset_width = formatter.value_width(available_inner_width).max(1);
-                            let wrap_options =
-                                textwrap::Options::new(reset_width).break_words(false);
                             // Reset timestamps are the actionable part of this row, so wrap them
                             // onto continuation lines instead of truncating partial times/dates.
-                            lines.extend(
-                                textwrap::wrap(reset_text.as_str(), wrap_options)
-                                    .into_iter()
-                                    .map(|wrapped| {
-                                        formatter.continuation(vec![
-                                            Span::from(wrapped.into_owned()).dim(),
-                                        ])
-                                    }),
-                            );
+                            lines.extend(wrapped_continuation(reset_text.as_str()));
                         }
                     } else {
                         lines.push(base_line);
                     }
                     if let Some(details) = details {
-                        let detail_width = formatter.value_width(available_inner_width).max(1);
-                        let wrap_options = textwrap::Options::new(detail_width).break_words(false);
-                        lines.extend(
-                            textwrap::wrap(details.as_str(), wrap_options)
-                                .into_iter()
-                                .map(|wrapped| {
-                                    formatter
-                                        .continuation(vec![Span::from(wrapped.into_owned()).dim()])
-                                }),
-                        );
+                        lines.extend(wrapped_continuation(details.as_str()));
                     }
                 }
                 StatusRateLimitValue::Text(text) => {
@@ -597,13 +576,9 @@ impl StatusHistoryCell {
         labels: &mut Vec<String>,
     ) {
         match &state.rate_limits {
-            StatusRateLimitData::Available(rows) => {
-                if rows.is_empty() {
-                    push_label(labels, seen, "Limits");
-                } else {
-                    for row in rows {
-                        push_label(labels, seen, row.label.as_str());
-                    }
+            StatusRateLimitData::Available(rows) if !rows.is_empty() => {
+                for row in rows {
+                    push_label(labels, seen, row.label.as_str());
                 }
             }
             StatusRateLimitData::Stale(rows) => {
@@ -612,8 +587,9 @@ impl StatusHistoryCell {
                 }
                 push_label(labels, seen, "Warning");
             }
-            StatusRateLimitData::Unavailable => push_label(labels, seen, "Limits"),
-            StatusRateLimitData::Missing => push_label(labels, seen, "Limits"),
+            StatusRateLimitData::Available(_)
+            | StatusRateLimitData::Unavailable
+            | StatusRateLimitData::Missing => push_label(labels, seen, "Limits"),
         }
     }
 }
