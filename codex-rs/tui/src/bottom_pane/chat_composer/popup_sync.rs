@@ -6,11 +6,7 @@ impl ChatComposer {
     pub(crate) fn sync_popups(&mut self) {
         self.sync_slash_command_elements();
         if self.history_search.is_some() || self.draft.textarea.vim_query().is_some() {
-            if self.popups.current_file_query.is_some() {
-                self.app_event_tx
-                    .send(AppEvent::StartFileSearch(String::new()));
-                self.popups.current_file_query = None;
-            }
+            self.cancel_file_search();
             self.popups.active = ActivePopup::None;
             self.popups.dismissed_file_token = None;
             self.popups.dismissed_mention_token = None;
@@ -32,11 +28,7 @@ impl ChatComposer {
         // When browsing input history (shell-style Up/Down recall), skip all popup
         // synchronization so nothing steals focus from continued history navigation.
         if browsing_history {
-            if self.popups.current_file_query.is_some() {
-                self.app_event_tx
-                    .send(AppEvent::StartFileSearch(String::new()));
-                self.popups.current_file_query = None;
-            }
+            self.cancel_file_search();
             self.popups.active = ActivePopup::None;
             return;
         }
@@ -65,11 +57,7 @@ impl ChatComposer {
         self.sync_command_popup(allow_command_popup);
 
         if matches!(self.popups.active, ActivePopup::Command(_)) {
-            if self.popups.current_file_query.is_some() {
-                self.app_event_tx
-                    .send(AppEvent::StartFileSearch(String::new()));
-                self.popups.current_file_query = None;
-            }
+            self.cancel_file_search();
             self.popups.dismissed_file_token = None;
             self.popups.dismissed_mention_token = None;
             return;
@@ -81,11 +69,7 @@ impl ChatComposer {
         }
 
         if let Some(target) = mention_target {
-            if self.popups.current_file_query.is_some() {
-                self.app_event_tx
-                    .send(AppEvent::StartFileSearch(String::new()));
-                self.popups.current_file_query = None;
-            }
+            self.cancel_file_search();
             self.sync_mention_popup(target);
             return;
         }
@@ -96,11 +80,7 @@ impl ChatComposer {
             return;
         }
 
-        if self.popups.current_file_query.is_some() {
-            self.app_event_tx
-                .send(AppEvent::StartFileSearch(String::new()));
-            self.popups.current_file_query = None;
-        }
+        self.cancel_file_search();
         self.popups.dismissed_file_token = None;
         if matches!(
             self.popups.active,
@@ -185,39 +165,28 @@ impl ChatComposer {
             return;
         }
 
-        if query.is_empty() {
+        self.app_event_tx
+            .send(AppEvent::StartFileSearch(query.clone()));
+        if !matches!(self.popups.active, ActivePopup::File(_)) {
+            self.popups.active = ActivePopup::File(FileSearchPopup::new());
+        }
+        if let ActivePopup::File(popup) = &mut self.popups.active {
+            if query.is_empty() {
+                popup.set_empty_prompt();
+            } else {
+                popup.set_query(&query);
+            }
+        }
+        self.popups.current_file_query = (!query.is_empty()).then_some(query);
+        self.popups.dismissed_file_token = None;
+    }
+
+    /// Ends the active `@` file search, if any; the app drops its search session on an empty query.
+    pub(super) fn cancel_file_search(&mut self) {
+        if self.popups.current_file_query.take().is_some() {
             self.app_event_tx
                 .send(AppEvent::StartFileSearch(String::new()));
-        } else {
-            self.app_event_tx
-                .send(AppEvent::StartFileSearch(query.clone()));
         }
-
-        match &mut self.popups.active {
-            ActivePopup::File(popup) => {
-                if query.is_empty() {
-                    popup.set_empty_prompt();
-                } else {
-                    popup.set_query(&query);
-                }
-            }
-            _ => {
-                let mut popup = FileSearchPopup::new();
-                if query.is_empty() {
-                    popup.set_empty_prompt();
-                } else {
-                    popup.set_query(&query);
-                }
-                self.popups.active = ActivePopup::File(popup);
-            }
-        }
-
-        if query.is_empty() {
-            self.popups.current_file_query = None;
-        } else {
-            self.popups.current_file_query = Some(query);
-        }
-        self.popups.dismissed_file_token = None;
     }
 
     fn sync_mention_popup(&mut self, target: MentionCompletionTarget) {

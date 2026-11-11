@@ -45,7 +45,6 @@ use super::ChatComposer;
 use super::ComposerDraft;
 use super::InputResult;
 use super::vim_history::VimHistory;
-use crate::app_event::AppEvent;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
@@ -128,11 +127,7 @@ impl ChatComposer {
         self.flush_pending_paste_burst();
         self.draft.paste_burst.clear_window_after_non_char();
 
-        if self.popups.current_file_query.is_some() {
-            self.app_event_tx
-                .send(AppEvent::StartFileSearch(String::new()));
-            self.popups.current_file_query = None;
-        }
+        self.cancel_file_search();
         self.popups.active = ActivePopup::None;
         self.attachments.clear_remote_image_selection();
         let original_draft = self.snapshot_draft();
