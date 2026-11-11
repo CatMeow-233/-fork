@@ -207,52 +207,33 @@ impl App {
             tui.frame_requester().schedule_frame();
             return Ok(());
         }
-        let Some(rendered_tail) = self.last_rendered_history_tail.as_ref() else {
-            self.insert_history_cell_lines(tui, status_cell.as_ref(), width);
-            self.last_rendered_history_tail = Some(RenderedHistoryTail {
-                cell: Arc::downgrade(&status_cell),
-                lines: updated_lines.clone(),
-            });
-            if let Some(status_history) = self.last_thread_usage_status_cell.as_mut() {
-                status_history.lines = updated_lines;
+        let rendered_tail = self.last_rendered_history_tail.as_ref().filter(|tail| {
+            tail.cell
+                .upgrade()
+                .is_some_and(|cell| Arc::ptr_eq(&cell, &status_cell))
+        });
+        if let Some(rendered_tail) = rendered_tail {
+            let prefix_len = rendered_tail
+                .lines
+                .iter()
+                .zip(&updated_lines)
+                .take_while(|(previous, updated)| previous == updated)
+                .count();
+            if prefix_len == rendered_tail.lines.len() && prefix_len == updated_lines.len() {
+                self.pending_thread_usage_history_refresh = false;
+                return Ok(());
             }
-            self.pending_thread_usage_history_refresh = false;
-            return Ok(());
-        };
-        if !rendered_tail
-            .cell
-            .upgrade()
-            .is_some_and(|cell| Arc::ptr_eq(&cell, &status_cell))
-        {
-            self.insert_history_cell_lines(tui, status_cell.as_ref(), width);
-            self.last_rendered_history_tail = Some(RenderedHistoryTail {
-                cell: Arc::downgrade(&status_cell),
-                lines: updated_lines.clone(),
-            });
-            if let Some(status_history) = self.last_thread_usage_status_cell.as_mut() {
-                status_history.lines = updated_lines;
+
+            let wrap_policy = self.history_line_wrap_policy();
+            if !tui.replace_visible_history_tail(
+                &rendered_tail.lines[prefix_len..],
+                &updated_lines[prefix_len..],
+                wrap_policy,
+            )? {
+                self.insert_history_cell_lines(tui, status_cell.as_ref(), width);
             }
-            self.pending_thread_usage_history_refresh = false;
-            return Ok(());
-        }
-
-        let prefix_len = rendered_tail
-            .lines
-            .iter()
-            .zip(&updated_lines)
-            .take_while(|(previous, updated)| previous == updated)
-            .count();
-        if prefix_len == rendered_tail.lines.len() && prefix_len == updated_lines.len() {
-            self.pending_thread_usage_history_refresh = false;
-            return Ok(());
-        }
-
-        let wrap_policy = self.history_line_wrap_policy();
-        if !tui.replace_visible_history_tail(
-            &rendered_tail.lines[prefix_len..],
-            &updated_lines[prefix_len..],
-            wrap_policy,
-        )? {
+        } else {
+            // No tail is on screen, or it belongs to another cell: append the card afresh.
             self.insert_history_cell_lines(tui, status_cell.as_ref(), width);
         }
         self.last_rendered_history_tail = Some(RenderedHistoryTail {
