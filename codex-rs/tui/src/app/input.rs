@@ -28,11 +28,7 @@ impl App {
             .is_some();
         let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
         let insert_escape = if rename_active {
-            let state = self
-                .agents_overview
-                .view_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let state = self.agents_overview.lock_view_state();
             state.rename_target.is_some() && state.input.should_handle_vim_insert_escape(escape)
         } else {
             self.chat_widget.no_modal_or_popup_active()
@@ -166,11 +162,7 @@ impl App {
         if !was_pending
             && contexts.contains(crate::keymap::KeymapContext::Agents)
             && {
-                let state = self
-                    .agents_overview
-                    .view_state
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let state = self.agents_overview.lock_view_state();
                 state.editing_metadata() && state.rename_target.is_none()
             }
             && crate::key_hint::is_plain_text_key_event(key_event)
@@ -239,11 +231,7 @@ impl App {
         if let Some(Overlay::Transcript(overlay)) = &mut self.overlay {
             overlay.key_chord_hint = items.clone();
         }
-        self.agents_overview
-            .view_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .key_chord_hint = items.clone();
+        self.agents_overview.lock_view_state().key_chord_hint = items.clone();
         self.chat_widget.set_footer_hint_override(items);
     }
 

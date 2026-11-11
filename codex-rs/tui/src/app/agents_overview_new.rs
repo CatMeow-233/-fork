@@ -299,11 +299,7 @@ impl App {
             Err(error) => return self.add_agents_overview_error(error.to_string()),
         };
         self.pending_managed_worktree_creation = true;
-        self.agents_overview
-            .view_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .creating_worktree = true;
+        self.agents_overview.lock_view_state().creating_worktree = true;
         let sender = self.app_event_tx.clone();
         tokio::spawn(async move {
             let result = tokio::task::spawn_blocking(move || {

@@ -320,11 +320,7 @@ impl App {
         self.agents_overview.active_refresh_thread_ids = thread_ids.clone();
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
-        self.agents_overview
-            .view_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .loading = discover;
+        self.agents_overview.lock_view_state().loading = discover;
         let refresh_task = tokio::spawn(async move {
             let result = async {
                 let mut threads = HashMap::new();

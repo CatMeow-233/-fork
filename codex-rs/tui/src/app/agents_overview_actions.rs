@@ -286,11 +286,7 @@ impl App {
         self.prepare_agents_overview_removal(&HashSet::from([thread_id]));
         let hidden = self.agents_overview.hidden_threads.insert(thread_id);
         {
-            let mut state = self
-                .agents_overview
-                .view_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = self.agents_overview.lock_view_state();
             state.removal = Some(action);
             // Confirmation may have been opened from the rename editor.
             state.rename_target = None;
@@ -346,11 +342,7 @@ impl App {
         if hidden {
             self.agents_overview.hidden_threads.remove(&thread_id);
         }
-        self.agents_overview
-            .view_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .removal = None;
+        self.agents_overview.lock_view_state().removal = None;
         let (result, detach_primary) = outcome?;
         if attempted {
             // A read started before the RPC can contain stale task and approval state.
@@ -360,11 +352,7 @@ impl App {
             self.agents_overview.request_id = None;
             self.agents_overview.refresh_show_more = false;
             self.agents_overview.active_refresh_thread_ids.clear();
-            self.agents_overview
-                .view_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .loading = false;
+            self.agents_overview.lock_view_state().loading = false;
             self.agents_overview.refresh_pending = false;
             self.agents_overview.refresh_notifications.clear();
         }

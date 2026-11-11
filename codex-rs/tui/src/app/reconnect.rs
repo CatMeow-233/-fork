@@ -372,11 +372,7 @@ impl App {
         // The old timer targets the discarded channel, so a new preview can be scheduled.
         self.config_notification_test_pending = None;
         {
-            let mut state = self
-                .agents_overview
-                .view_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = self.agents_overview.lock_view_state();
             state.connection_notice = None;
             state.restart_history_search();
             if state.creating_worktree {

@@ -130,11 +130,7 @@ impl AgentsOverviewView {
 impl AgentsOverviewState {
     pub(in super::super) fn new(grouping: codex_config::types::AgentsOverviewGrouping) -> Self {
         let state = Self::default();
-        state
-            .view_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .grouping = grouping.into();
+        state.lock_view_state().grouping = grouping.into();
         state
     }
 }

@@ -18,6 +18,7 @@ mod selection;
 use super::agents_overview_view::AgentsOverviewGroup;
 use super::agents_overview_view::AgentsOverviewRow;
 use super::agents_overview_view::AgentsOverviewView;
+use super::agents_overview_view::AgentsOverviewViewState;
 use super::app_server_requests::BufferedServerRequest;
 use super::session_lifecycle::ThreadAttachPresentation;
 use super::*;
@@ -91,6 +92,15 @@ impl Drop for AgentsOverviewState {
     }
 }
 
+impl AgentsOverviewState {
+    /// Locks the shared view state, recovering it if a panic poisoned the mutex.
+    pub(super) fn lock_view_state(&self) -> std::sync::MutexGuard<'_, AgentsOverviewViewState> {
+        self.view_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 impl App {
     pub(super) fn open_agents_overview(&mut self, app_server: &AppServerSession) {
         let threads = self
@@ -106,11 +116,7 @@ impl App {
         self.chat_widget.show_bottom_pane_view(Box::new(view));
         if self.reconnect.offline {
             self.reconnect.presentation = reconnect::ReconnectPresentation::Overview;
-            let mut state = self
-                .agents_overview
-                .view_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = self.agents_overview.lock_view_state();
             state.loading = false;
             state.connection_notice = Some(if self.reconnect.failed {
                 "Reconnect failed — agent list is stale; relaunch to retry"
@@ -139,11 +145,7 @@ impl App {
             .as_ref()
             .is_ok_and(|refresh| refresh.recent_seed_complete);
         {
-            let mut state = self
-                .agents_overview
-                .view_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = self.agents_overview.lock_view_state();
             state.loading = false;
             state.refresh_failed = !refill_succeeded;
         }
@@ -162,11 +164,7 @@ impl App {
                         self.agents_overview.show_more_requested = false;
                     }
                     self.agents_overview.initialized = true;
-                    self.agents_overview
-                        .view_state
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .has_more = discovery.has_more();
+                    self.agents_overview.lock_view_state().has_more = discovery.has_more();
                     self.agents_overview.discovery = discovery;
                 }
                 self.agents_overview
@@ -330,10 +328,7 @@ impl App {
     ) -> AgentsOverviewView {
         {
             let overview = &self.agents_overview;
-            let mut state = overview
-                .view_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = overview.lock_view_state();
             state.vim_enabled = self.chat_widget.composer_is_vim_enabled();
             if state
                 .history
