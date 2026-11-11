@@ -482,7 +482,8 @@ impl TextArea {
         let text = filtered.as_ref();
         self.mouse_selection = None;
         self.clear_vim_replace_recovery();
-        let pos = self.clamp_pos_for_insertion(pos);
+        // Never insert into the middle of an atomic element.
+        let pos = self.clamp_pos_to_nearest_boundary(pos);
         if pos == 0 && !text.is_empty() {
             self.prefix_insertion_revision = self.prefix_insertion_revision.wrapping_add(1);
         }
@@ -1886,24 +1887,6 @@ impl TextArea {
         let pos = self.clamp_pos_to_char_boundary(pos);
         if let Some(idx) = self.find_element_containing(pos) {
             let e = &self.elements[idx];
-            let dist_start = pos.saturating_sub(e.range.start);
-            let dist_end = e.range.end.saturating_sub(pos);
-            if dist_start <= dist_end {
-                self.clamp_pos_to_char_boundary(e.range.start)
-            } else {
-                self.clamp_pos_to_char_boundary(e.range.end)
-            }
-        } else {
-            pos
-        }
-    }
-
-    fn clamp_pos_for_insertion(&self, pos: usize) -> usize {
-        let pos = self.clamp_pos_to_char_boundary(pos);
-        // Do not allow inserting into the middle of an element
-        if let Some(idx) = self.find_element_containing(pos) {
-            let e = &self.elements[idx];
-            // Choose closest edge for insertion
             let dist_start = pos.saturating_sub(e.range.start);
             let dist_end = e.range.end.saturating_sub(pos);
             if dist_start <= dist_end {

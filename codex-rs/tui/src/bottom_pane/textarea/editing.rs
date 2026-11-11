@@ -26,7 +26,7 @@ impl TextArea {
     pub(crate) fn edit_target(&self) -> EditTarget {
         let range = self.mouse_selection_range().map_or_else(
             || {
-                let cursor = self.clamp_pos_for_insertion(self.cursor_pos);
+                let cursor = self.clamp_pos_to_nearest_boundary(self.cursor_pos);
                 cursor..cursor
             },
             |range| self.expand_range_to_element_boundaries(range),
