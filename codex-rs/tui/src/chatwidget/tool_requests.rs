@@ -156,49 +156,55 @@ impl ChatWidget {
             return;
         }
 
-        if ev.status == GuardianAssessmentStatus::TimedOut {
-            let cell = if let Some(command) = guardian_command(&ev.action) {
-                history_cell::new_approval_decision_cell(
+        let decision_cell = |decision: crate::history_cell::ReviewDecision| {
+            if let Some(command) = guardian_command(&ev.action) {
+                return history_cell::new_approval_decision_cell(
                     history_cell::ApprovalDecisionSubject::Command(command),
-                    crate::history_cell::ReviewDecision::TimedOut,
+                    decision,
                     history_cell::ApprovalDecisionActor::Guardian,
-                )
-            } else {
-                match &ev.action {
-                    GuardianAssessmentAction::WriteStdin { .. } => {
-                        history_cell::new_guardian_timed_out_action_request(format!(
-                            "codex could {}",
-                            auto_review_denials::action_summary(&ev.action)
-                        ))
-                    }
-                    GuardianAssessmentAction::ApplyPatch { files, .. } => {
-                        let files = files
-                            .iter()
-                            .map(codex_utils_path_uri::LegacyAppPathString::render_for_ui)
-                            .collect::<Vec<_>>();
-                        history_cell::new_guardian_timed_out_patch_request(files)
-                    }
-                    GuardianAssessmentAction::McpToolCall {
-                        server, tool_name, ..
-                    } => history_cell::new_guardian_timed_out_action_request(format!(
-                        "codex could call MCP tool {server}.{tool_name}"
-                    )),
-                    GuardianAssessmentAction::NetworkAccess { target, .. } => {
-                        history_cell::new_guardian_timed_out_action_request(format!(
-                            "codex could access {target}"
-                        ))
-                    }
-                    GuardianAssessmentAction::RequestPermissions { reason, .. } => {
-                        history_cell::new_guardian_timed_out_action_request(
-                            permission_request_summary("codex could request permissions", reason),
-                        )
-                    }
-                    GuardianAssessmentAction::Command { .. } => unreachable!(),
-                    GuardianAssessmentAction::Execve { .. } => unreachable!(),
+                );
+            }
+            let timed_out = decision == crate::history_cell::ReviewDecision::TimedOut;
+            let verb = if timed_out { "codex could" } else { "codex to" };
+            let action_request = |summary| {
+                if timed_out {
+                    history_cell::new_guardian_timed_out_action_request(summary)
+                } else {
+                    history_cell::new_guardian_denied_action_request(summary)
                 }
             };
+            match &ev.action {
+                GuardianAssessmentAction::WriteStdin { .. } => action_request(format!(
+                    "{verb} {}",
+                    auto_review_denials::action_summary(&ev.action)
+                )),
+                GuardianAssessmentAction::ApplyPatch { files, .. } => {
+                    let files = files
+                        .iter()
+                        .map(codex_utils_path_uri::LegacyAppPathString::render_for_ui)
+                        .collect();
+                    if timed_out {
+                        history_cell::new_guardian_timed_out_patch_request(files)
+                    } else {
+                        history_cell::new_guardian_denied_patch_request(files)
+                    }
+                }
+                GuardianAssessmentAction::McpToolCall {
+                    server, tool_name, ..
+                } => action_request(format!("{verb} call MCP tool {server}.{tool_name}")),
+                GuardianAssessmentAction::NetworkAccess { target, .. } => {
+                    action_request(format!("{verb} access {target}"))
+                }
+                GuardianAssessmentAction::RequestPermissions { reason, .. } => action_request(
+                    permission_request_summary(&format!("{verb} request permissions"), reason),
+                ),
+                GuardianAssessmentAction::Command { .. }
+                | GuardianAssessmentAction::Execve { .. } => unreachable!(),
+            }
+        };
 
-            self.add_boxed_history(cell);
+        if ev.status == GuardianAssessmentStatus::TimedOut {
+            self.add_boxed_history(decision_cell(crate::history_cell::ReviewDecision::TimedOut));
             self.request_redraw();
             return;
         }
@@ -207,49 +213,7 @@ impl ChatWidget {
             return;
         }
         self.review.recent_auto_review_denials.push(ev.clone());
-        let cell = if let Some(command) = guardian_command(&ev.action) {
-            history_cell::new_approval_decision_cell(
-                history_cell::ApprovalDecisionSubject::Command(command),
-                crate::history_cell::ReviewDecision::Denied,
-                history_cell::ApprovalDecisionActor::Guardian,
-            )
-        } else {
-            match &ev.action {
-                GuardianAssessmentAction::WriteStdin { .. } => {
-                    history_cell::new_guardian_denied_action_request(format!(
-                        "codex to {}",
-                        auto_review_denials::action_summary(&ev.action)
-                    ))
-                }
-                GuardianAssessmentAction::ApplyPatch { files, .. } => {
-                    let files = files
-                        .iter()
-                        .map(codex_utils_path_uri::LegacyAppPathString::render_for_ui)
-                        .collect::<Vec<_>>();
-                    history_cell::new_guardian_denied_patch_request(files)
-                }
-                GuardianAssessmentAction::McpToolCall {
-                    server, tool_name, ..
-                } => history_cell::new_guardian_denied_action_request(format!(
-                    "codex to call MCP tool {server}.{tool_name}"
-                )),
-                GuardianAssessmentAction::NetworkAccess { target, .. } => {
-                    history_cell::new_guardian_denied_action_request(format!(
-                        "codex to access {target}"
-                    ))
-                }
-                GuardianAssessmentAction::RequestPermissions { reason, .. } => {
-                    history_cell::new_guardian_denied_action_request(permission_request_summary(
-                        "codex to request permissions",
-                        reason,
-                    ))
-                }
-                GuardianAssessmentAction::Command { .. } => unreachable!(),
-                GuardianAssessmentAction::Execve { .. } => unreachable!(),
-            }
-        };
-
-        self.add_boxed_history(cell);
+        self.add_boxed_history(decision_cell(crate::history_cell::ReviewDecision::Denied));
         self.request_redraw();
     }
 
