@@ -495,9 +495,7 @@ impl ChatComposer {
             return (InputResult::None, true);
         }
         if self.draft.is_bash_mode && key_event.code == KeyCode::Esc {
-            if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-                self.apply_paste(pasted);
-            }
+            self.flush_pending_paste_burst();
             if self.draft.textarea.is_empty() {
                 self.draft.is_bash_mode = false;
                 return (InputResult::None, true);

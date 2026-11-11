@@ -125,9 +125,7 @@ impl ChatComposer {
     /// footer query becomes non-empty, which keeps Ctrl+R from replacing an empty composer with
     /// the latest prompt before the user has searched for anything.
     pub(super) fn begin_history_search(&mut self) -> (InputResult, bool) {
-        if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-            self.apply_paste(pasted);
-        }
+        self.flush_pending_paste_burst();
         self.draft.paste_burst.clear_window_after_non_char();
 
         if self.popups.current_file_query.is_some() {

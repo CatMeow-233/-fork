@@ -219,9 +219,7 @@ impl ChatComposer {
     /// commands, not as candidate literal paste text. It also resets transient
     /// footer mode so the visible hints match the new editing surface.
     pub(crate) fn set_vim_enabled(&mut self, enabled: bool) {
-        if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-            self.apply_paste(pasted);
-        }
+        self.flush_pending_paste_burst();
         self.draft.textarea.enable_vim_search();
         self.draft.textarea.set_vim_enabled(enabled);
         self.vim_history = VimHistory::default();
@@ -628,9 +626,7 @@ impl ChatComposer {
 
     /// Flush buffered typing before clearing so cancellation preserves the complete draft in history.
     pub(crate) fn clear_for_ctrl_c(&mut self) -> Option<String> {
-        if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-            self.apply_paste(pasted);
-        }
+        self.flush_pending_paste_burst();
         if self.is_empty() {
             return None;
         }

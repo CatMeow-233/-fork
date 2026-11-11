@@ -72,9 +72,7 @@ impl ChatComposer {
         {
             return None;
         }
-        if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-            self.apply_paste(pasted);
-        }
+        self.flush_pending_paste_burst();
         self.draft.paste_burst.clear_window_after_non_char();
         let range = self.draft.textarea.mouse_selection_range()?;
         self.end_mouse_drag();
@@ -132,9 +130,7 @@ impl ChatComposer {
             return false;
         }
         if matches!(event.kind, MouseEventKind::Down(_)) {
-            if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-                self.apply_paste(pasted);
-            }
+            self.flush_pending_paste_burst();
             self.draft.paste_burst.clear_window_after_non_char();
         }
         true

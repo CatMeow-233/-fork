@@ -191,9 +191,7 @@ impl ChatComposer {
             return result;
         }
         if should_queue {
-            if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-                self.apply_paste(pasted);
-            }
+            self.flush_pending_paste_burst();
             let visible_shell_command = self.is_bang_shell_command();
             let original_input = self.current_text();
             let original_text_elements = self.current_text_elements();

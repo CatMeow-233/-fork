@@ -56,9 +56,7 @@ impl ChatComposer {
             // still want to detect paste-like bursts. Before applying any non-ASCII input, flush
             // any existing burst buffer (including a pending first char from the ASCII path) so
             // we don't carry that transient state forward.
-            if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-                self.apply_paste(pasted);
-            }
+            self.flush_pending_paste_burst();
             if let Some(decision) = self.draft.paste_burst.on_plain_char_no_hold(now) {
                 match decision {
                     CharDecision::BufferAppend => {
@@ -93,9 +91,7 @@ impl ChatComposer {
                 }
             }
         }
-        if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-            self.apply_paste(pasted);
-        }
+        self.flush_pending_paste_burst();
         let elements_before = self.draft.textarea.element_payloads();
         self.draft.textarea.input(input);
         self.reconcile_deleted_elements(elements_before);
@@ -226,9 +222,7 @@ impl ChatComposer {
                     }
                 }
             }
-            if let Some(pasted) = self.draft.paste_burst.flush_before_modified_input() {
-                self.apply_paste(pasted);
-            }
+            self.flush_pending_paste_burst();
         }
 
         // Flush any buffered burst before applying a non-char input (arrow keys, etc).
