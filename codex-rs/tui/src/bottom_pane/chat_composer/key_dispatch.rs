@@ -189,26 +189,11 @@ impl ChatComposer {
         };
 
         match key_event {
-            KeyEvent {
-                code: KeyCode::Up, ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('p'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
+            _ if is_popup_up_key(&key_event) => {
                 popup.move_up();
                 (InputResult::None, true)
             }
-            KeyEvent {
-                code: KeyCode::Down,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('n'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
+            _ if is_popup_down_key(&key_event) => {
                 popup.move_down();
                 (InputResult::None, true)
             }
@@ -271,26 +256,11 @@ impl ChatComposer {
         let mut close_popup = false;
 
         let result = match key_event {
-            KeyEvent {
-                code: KeyCode::Up, ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('p'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
+            _ if is_popup_up_key(&key_event) => {
                 popup.move_up();
                 (InputResult::None, true)
             }
-            KeyEvent {
-                code: KeyCode::Down,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('n'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
+            _ if is_popup_down_key(&key_event) => {
                 popup.move_down();
                 (InputResult::None, true)
             }
@@ -358,26 +328,11 @@ impl ChatComposer {
         let mut submit_without_popup = false;
 
         let result = match key_event {
-            KeyEvent {
-                code: KeyCode::Up, ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('p'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
+            _ if is_popup_up_key(&key_event) => {
                 popup.move_up();
                 (InputResult::None, true)
             }
-            KeyEvent {
-                code: KeyCode::Down,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('n'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
+            _ if is_popup_down_key(&key_event) => {
                 popup.move_down();
                 (InputResult::None, true)
             }
@@ -611,4 +566,16 @@ impl ChatComposer {
             .then_some(())
             .map(|_| Line::from(vec![Span::from("Shell mode").light_red()]))
     }
+}
+
+/// Up/Ctrl+P moves the highlighted row up in every composer popup.
+pub(super) fn is_popup_up_key(key_event: &KeyEvent) -> bool {
+    key_event.code == KeyCode::Up
+        || (key_event.code == KeyCode::Char('p') && key_event.modifiers == KeyModifiers::CONTROL)
+}
+
+/// Down/Ctrl+N moves the highlighted row down in every composer popup.
+pub(super) fn is_popup_down_key(key_event: &KeyEvent) -> bool {
+    key_event.code == KeyCode::Down
+        || (key_event.code == KeyCode::Char('n') && key_event.modifiers == KeyModifiers::CONTROL)
 }

@@ -24,6 +24,8 @@ use super::ActivePopup;
 use super::ChatComposer;
 use super::InputResult;
 use super::QueuedInputAction;
+use super::key_dispatch::is_popup_down_key;
+use super::key_dispatch::is_popup_up_key;
 use super::parent_owned_command_is_allowed;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -256,26 +258,11 @@ impl ChatComposer {
         };
 
         match key_event {
-            KeyEvent {
-                code: KeyCode::Up, ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('p'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
+            _ if is_popup_up_key(&key_event) => {
                 popup.move_up();
                 (InputResult::None, true)
             }
-            KeyEvent {
-                code: KeyCode::Down,
-                ..
-            }
-            | KeyEvent {
-                code: KeyCode::Char('n'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            } => {
+            _ if is_popup_down_key(&key_event) => {
                 popup.move_down();
                 (InputResult::None, true)
             }
