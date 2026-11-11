@@ -7,28 +7,37 @@ use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 
 impl App {
+    /// Apply `update` to both cached copies of a thread's session: the primary snapshot (when
+    /// `thread_id` is the primary thread) and the session in the thread's event store.
+    pub(super) async fn update_cached_thread_session(
+        &mut self,
+        thread_id: ThreadId,
+        update: impl Fn(&mut ThreadSessionState),
+    ) {
+        if self.primary_thread_id == Some(thread_id)
+            && let Some(session) = self.primary_session_configured.as_mut()
+        {
+            update(session);
+        }
+
+        if let Some(channel) = self.thread_event_channels.get(&thread_id) {
+            let mut store = channel.store.lock().await;
+            if let Some(session) = store.session.as_mut() {
+                update(session);
+            }
+        }
+    }
+
     pub(super) async fn sync_active_thread_service_tier_to_cached_session(&mut self) {
         let Some(active_thread_id) = self.active_thread_id else {
             return;
         };
 
         let service_tier = self.chat_widget.current_service_tier().map(str::to_string);
-        let update_session = |session: &mut ThreadSessionState| {
+        self.update_cached_thread_session(active_thread_id, |session| {
             session.service_tier = service_tier.clone();
-        };
-
-        if self.primary_thread_id == Some(active_thread_id)
-            && let Some(session) = self.primary_session_configured.as_mut()
-        {
-            update_session(session);
-        }
-
-        if let Some(channel) = self.thread_event_channels.get(&active_thread_id) {
-            let mut store = channel.store.lock().await;
-            if let Some(session) = store.session.as_mut() {
-                update_session(session);
-            }
-        }
+        })
+        .await;
     }
 
     pub(super) async fn sync_active_thread_permission_settings_to_cached_session(&mut self) {
@@ -49,25 +58,13 @@ impl App {
             .config_ref()
             .permissions
             .active_permission_profile();
-        let update_session = |session: &mut ThreadSessionState| {
+        self.update_cached_thread_session(active_thread_id, |session| {
             session.approval_policy = approval_policy;
             session.approvals_reviewer = approvals_reviewer;
             session.permission_profile = permission_profile.clone();
             session.active_permission_profile = active_permission_profile.clone();
-        };
-
-        if self.primary_thread_id == Some(active_thread_id)
-            && let Some(session) = self.primary_session_configured.as_mut()
-        {
-            update_session(session);
-        }
-
-        if let Some(channel) = self.thread_event_channels.get(&active_thread_id) {
-            let mut store = channel.store.lock().await;
-            if let Some(session) = store.session.as_mut() {
-                update_session(session);
-            }
-        }
+        })
+        .await;
     }
 
     pub(super) async fn session_state_for_thread_read(

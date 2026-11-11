@@ -62,17 +62,8 @@ impl App {
             }
         }
         self.chat_widget.set_daybreak_enabled(enabled);
-        if self.primary_thread_id == Some(thread_id)
-            && let Some(session) = self.primary_session_configured.as_mut()
-        {
-            session.daybreak_enabled = enabled;
-        }
-        if let Some(channel) = self.thread_event_channels.get(&thread_id) {
-            let mut store = channel.store.lock().await;
-            if let Some(session) = store.session.as_mut() {
-                session.daybreak_enabled = enabled;
-            }
-        }
+        self.update_cached_thread_session(thread_id, |session| session.daybreak_enabled = enabled)
+            .await;
         self.refresh_status_line();
         let edits = vec![crate::config_update::replace_config_value(
             "daybreak",
