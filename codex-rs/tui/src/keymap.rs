@@ -738,32 +738,22 @@ impl RuntimeKeymap {
                         && binding.chord.prefix.parts() == key_hint::plain(KeyCode::F(9)).parts()
                 }));
 
-        // New activity defaults yield to existing custom keys and chord prefixes.
-        let focus_activity_defaults: Vec<_> = defaults
-            .app
-            .focus_activity
-            .iter()
-            .copied()
-            .filter(|binding| {
-                !configured_context_binding_is_used(keymap, *binding)
-                    && !chords.bindings.iter().any(|chord| {
-                        chord.chord.prefix.normalized_parts() == binding.normalized_parts()
-                    })
-            })
-            .collect();
-        // New defaults must not invalidate an existing custom binding or chord prefix.
-        let open_warnings_defaults: Vec<_> = defaults
-            .app
-            .open_warnings
-            .iter()
-            .copied()
-            .filter(|binding| {
-                !configured_context_binding_is_used(keymap, *binding)
-                    && !chords.bindings.iter().any(|chord| {
-                        chord.chord.prefix.normalized_parts() == binding.normalized_parts()
-                    })
-            })
-            .collect();
+        // New activity and warnings defaults must not invalidate an existing custom binding or
+        // chord prefix.
+        let unclaimed_defaults = |bindings: &[KeyBinding]| -> Vec<KeyBinding> {
+            bindings
+                .iter()
+                .copied()
+                .filter(|binding| {
+                    !configured_context_binding_is_used(keymap, *binding)
+                        && !chords.bindings.iter().any(|chord| {
+                            chord.chord.prefix.normalized_parts() == binding.normalized_parts()
+                        })
+                })
+                .collect()
+        };
+        let focus_activity_defaults = unclaimed_defaults(&defaults.app.focus_activity);
+        let open_warnings_defaults = unclaimed_defaults(&defaults.app.open_warnings);
 
         let app = AppKeymap {
             change_host: resolve_bindings(
@@ -932,27 +922,15 @@ impl RuntimeKeymap {
             toggle_voice: if voice_toggle_default_is_shadowed {
                 Vec::new()
             } else {
-                resolve_bindings(
-                    keymap.chat.toggle_voice.as_ref(),
-                    &defaults.chat.toggle_voice,
-                    "tui.keymap.chat.toggle_voice",
-                )?
+                resolve_local!(keymap, defaults, chat, toggle_voice)
             },
             toggle_voice_mute: if voice_mute_default_is_shadowed {
                 Vec::new()
             } else {
-                resolve_bindings(
-                    keymap.chat.toggle_voice_mute.as_ref(),
-                    &defaults.chat.toggle_voice_mute,
-                    "tui.keymap.chat.toggle_voice_mute",
-                )?
+                resolve_local!(keymap, defaults, chat, toggle_voice_mute)
             },
             chord_hints: Arc::clone(&chords),
-            interrupt_turn: resolve_bindings(
-                keymap.chat.interrupt_turn.as_ref(),
-                &defaults.chat.interrupt_turn,
-                "tui.keymap.chat.interrupt_turn",
-            )?,
+            interrupt_turn: resolve_local!(keymap, defaults, chat, interrupt_turn),
             decrease_reasoning_effort: resolve_bindings(
                 keymap.chat.decrease_reasoning_effort.as_ref(),
                 &defaults.chat.decrease_reasoning_effort,
@@ -970,11 +948,7 @@ impl RuntimeKeymap {
                 previous_permission_mode
             ),
             next_permission_mode: resolve_local!(keymap, defaults, chat, next_permission_mode),
-            edit_queued_message: resolve_bindings(
-                keymap.chat.edit_queued_message.as_ref(),
-                &defaults.chat.edit_queued_message,
-                "tui.keymap.chat.edit_queued_message",
-            )?,
+            edit_queued_message: resolve_local!(keymap, defaults, chat, edit_queued_message),
             prompt_stack_back: resolve_local!(keymap, defaults, chat, prompt_stack_back),
             skip_question: resolve_local!(keymap, defaults, chat, skip_question),
         };
@@ -1212,25 +1186,15 @@ impl RuntimeKeymap {
                 .substitute_char
                 .retain(|binding| !configured_vim_normal_bindings_to_preserve.contains(binding));
         }
-        if keymap.vim_normal.replace_char.is_none() {
-            vim_normal.replace_char.retain(|binding| {
-                !configured_vim_normal_bindings_to_preserve.contains(binding)
-                    && !chords.bindings.iter().any(|chord| {
-                        chord.action.context == KeymapContext::VimNormal
-                            && chord.chord.prefix.parts() == binding.parts()
-                    })
-            });
-        }
-        if keymap.vim_normal.repeat_last_change.is_none() {
-            vim_normal.repeat_last_change.retain(|binding| {
-                !configured_vim_normal_bindings_to_preserve.contains(binding)
-                    && !chords.bindings.iter().any(|chord| {
-                        chord.action.context == KeymapContext::VimNormal
-                            && chord.chord.prefix.parts() == binding.parts()
-                    })
-            });
-        }
         for (configured, bindings) in [
+            (
+                keymap.vim_normal.replace_char.as_ref(),
+                &mut vim_normal.replace_char,
+            ),
+            (
+                keymap.vim_normal.repeat_last_change.as_ref(),
+                &mut vim_normal.repeat_last_change,
+            ),
             (
                 keymap.vim_normal.find_forward.as_ref(),
                 &mut vim_normal.find_forward,
