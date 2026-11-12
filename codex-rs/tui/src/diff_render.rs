@@ -545,7 +545,11 @@ fn render_change_with_preview(
 ) {
     let style_context = current_diff_render_style_context();
     match change {
-        FileChange::Add { content } => {
+        FileChange::Add { content } | FileChange::Delete { content } => {
+            let kind = match change {
+                FileChange::Add { .. } => DiffLineType::Insert,
+                _ => DiffLineType::Delete,
+            };
             // Pre-highlight the entire file content as a whole.
             let syntax_lines = lang.and_then(|l| highlight_code_to_styled_spans(content, l));
             let line_number_width = line_number_width(content.lines().count());
@@ -553,59 +557,16 @@ fn render_change_with_preview(
                 if preview_lines.is_some_and(|limit| out.len() >= limit) {
                     break;
                 }
-                let syn = syntax_lines.as_ref().and_then(|sl| sl.get(i));
-                if let Some(spans) = syn {
-                    out.extend(render_wrapped_diff_line(
-                        i + 1,
-                        DiffLineType::Insert,
-                        raw,
-                        width,
-                        line_number_width,
-                        Some(spans),
-                        style_context,
-                    ));
-                } else {
-                    out.extend(render_wrapped_diff_line(
-                        i + 1,
-                        DiffLineType::Insert,
-                        raw,
-                        width,
-                        line_number_width,
-                        /*syntax_spans*/ None,
-                        style_context,
-                    ));
-                }
-            }
-        }
-        FileChange::Delete { content } => {
-            let syntax_lines = lang.and_then(|l| highlight_code_to_styled_spans(content, l));
-            let line_number_width = line_number_width(content.lines().count());
-            for (i, raw) in content.lines().enumerate() {
-                if preview_lines.is_some_and(|limit| out.len() >= limit) {
-                    break;
-                }
-                let syn = syntax_lines.as_ref().and_then(|sl| sl.get(i));
-                if let Some(spans) = syn {
-                    out.extend(render_wrapped_diff_line(
-                        i + 1,
-                        DiffLineType::Delete,
-                        raw,
-                        width,
-                        line_number_width,
-                        Some(spans),
-                        style_context,
-                    ));
-                } else {
-                    out.extend(render_wrapped_diff_line(
-                        i + 1,
-                        DiffLineType::Delete,
-                        raw,
-                        width,
-                        line_number_width,
-                        /*syntax_spans*/ None,
-                        style_context,
-                    ));
-                }
+                let syntax_spans = syntax_lines.as_ref().and_then(|sl| sl.get(i));
+                out.extend(render_wrapped_diff_line(
+                    i + 1,
+                    kind,
+                    raw,
+                    width,
+                    line_number_width,
+                    syntax_spans.map(Vec::as_slice),
+                    style_context,
+                ));
             }
         }
         FileChange::Update { unified_diff, .. } => {
@@ -696,89 +657,33 @@ fn render_change_with_preview(
                         let syntax_spans = hunk_syntax_lines
                             .as_ref()
                             .and_then(|syntax_lines| syntax_lines.get(line_idx));
-                        match l {
+                        let (line_number, kind, text) = match l {
                             diffy::Line::Insert(text) => {
-                                let s = text.trim_end_matches('\n');
-                                if let Some(syn) = syntax_spans {
-                                    out.extend(render_wrapped_diff_line(
-                                        new_ln,
-                                        DiffLineType::Insert,
-                                        s,
-                                        width,
-                                        line_number_width,
-                                        Some(syn),
-                                        style_context,
-                                    ));
-                                } else {
-                                    out.extend(render_wrapped_diff_line(
-                                        new_ln,
-                                        DiffLineType::Insert,
-                                        s,
-                                        width,
-                                        line_number_width,
-                                        /*syntax_spans*/ None,
-                                        style_context,
-                                    ));
-                                }
                                 new_ln += 1;
+                                (new_ln - 1, DiffLineType::Insert, text)
                             }
                             diffy::Line::Delete(text) => {
-                                let s = text.trim_end_matches('\n');
-                                if let Some(syn) = syntax_spans {
-                                    out.extend(render_wrapped_diff_line(
-                                        old_ln,
-                                        DiffLineType::Delete,
-                                        s,
-                                        width,
-                                        line_number_width,
-                                        Some(syn),
-                                        style_context,
-                                    ));
-                                } else {
-                                    out.extend(render_wrapped_diff_line(
-                                        old_ln,
-                                        DiffLineType::Delete,
-                                        s,
-                                        width,
-                                        line_number_width,
-                                        /*syntax_spans*/ None,
-                                        style_context,
-                                    ));
-                                }
                                 old_ln += 1;
+                                (old_ln - 1, DiffLineType::Delete, text)
                             }
                             diffy::Line::Context(text) => {
-                                if preview_lines.is_some() {
-                                    old_ln += 1;
-                                    new_ln += 1;
-                                    continue;
-                                }
-                                let s = text.trim_end_matches('\n');
-                                if let Some(syn) = syntax_spans {
-                                    out.extend(render_wrapped_diff_line(
-                                        new_ln,
-                                        DiffLineType::Context,
-                                        s,
-                                        width,
-                                        line_number_width,
-                                        Some(syn),
-                                        style_context,
-                                    ));
-                                } else {
-                                    out.extend(render_wrapped_diff_line(
-                                        new_ln,
-                                        DiffLineType::Context,
-                                        s,
-                                        width,
-                                        line_number_width,
-                                        /*syntax_spans*/ None,
-                                        style_context,
-                                    ));
-                                }
                                 old_ln += 1;
                                 new_ln += 1;
+                                if preview_lines.is_some() {
+                                    continue;
+                                }
+                                (new_ln - 1, DiffLineType::Context, text)
                             }
-                        }
+                        };
+                        out.extend(render_wrapped_diff_line(
+                            line_number,
+                            kind,
+                            text.trim_end_matches('\n'),
+                            width,
+                            line_number_width,
+                            syntax_spans.map(Vec::as_slice),
+                            style_context,
+                        ));
                     }
                 }
             }
