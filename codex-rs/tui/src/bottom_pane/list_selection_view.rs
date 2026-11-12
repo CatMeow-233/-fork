@@ -28,6 +28,7 @@ use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
 use crate::key_hint::ShortcutHint;
 use crate::key_hint::is_plain_text_key_event;
+use crate::keymap::ListAction;
 use crate::keymap::ListKeymap;
 use crate::render::Insets;
 use crate::render::RectExt as _;
@@ -890,72 +891,39 @@ impl ListSelectionView {
             .map(|(idx, _)| idx)
     }
 
-    fn move_up(&mut self) {
+    /// Moves the selection, skips disabled rows in the travel direction, and reports a change.
+    fn navigate(&mut self, action: ListAction) {
         let before = self.selected_actual_idx();
         let len = self.visible_len();
-        self.state.move_up_wrap(len);
         let visible = self.visible_rows(len);
-        self.skip_disabled_up();
-        self.state.ensure_visible(len, visible);
-        if self.selected_actual_idx() != before {
-            self.fire_selection_changed();
+        match action {
+            ListAction::MoveUp => {
+                self.state.move_up_wrap(len);
+                self.skip_disabled_up();
+            }
+            ListAction::MoveDown => {
+                self.state.move_down_wrap(len);
+                self.skip_disabled_down();
+            }
+            ListAction::PageUp => {
+                self.state.page_up_clamped(len, visible);
+                self.skip_disabled_up_clamped();
+            }
+            ListAction::PageDown => {
+                self.state.page_down_clamped(len, visible);
+                self.skip_disabled_down_clamped();
+            }
+            ListAction::JumpTop => {
+                self.state.jump_top(len, visible);
+                self.skip_disabled_down_clamped();
+            }
+            ListAction::JumpBottom => {
+                self.state.jump_bottom(len, visible);
+                self.skip_disabled_up_clamped();
+            }
+            // `vertical_action_for` yields only the six actions above.
+            _ => return,
         }
-    }
-
-    fn move_down(&mut self) {
-        let before = self.selected_actual_idx();
-        let len = self.visible_len();
-        self.state.move_down_wrap(len);
-        let visible = self.visible_rows(len);
-        self.skip_disabled_down();
-        self.state.ensure_visible(len, visible);
-        if self.selected_actual_idx() != before {
-            self.fire_selection_changed();
-        }
-    }
-
-    fn page_up(&mut self) {
-        let before = self.selected_actual_idx();
-        let len = self.visible_len();
-        let visible = self.visible_rows(len);
-        self.state.page_up_clamped(len, visible);
-        self.skip_disabled_up_clamped();
-        self.state.ensure_visible(len, visible);
-        if self.selected_actual_idx() != before {
-            self.fire_selection_changed();
-        }
-    }
-
-    fn page_down(&mut self) {
-        let before = self.selected_actual_idx();
-        let len = self.visible_len();
-        let visible = self.visible_rows(len);
-        self.state.page_down_clamped(len, visible);
-        self.skip_disabled_down_clamped();
-        self.state.ensure_visible(len, visible);
-        if self.selected_actual_idx() != before {
-            self.fire_selection_changed();
-        }
-    }
-
-    fn jump_top(&mut self) {
-        let before = self.selected_actual_idx();
-        let len = self.visible_len();
-        let visible = self.visible_rows(len);
-        self.state.jump_top(len, visible);
-        self.skip_disabled_down_clamped();
-        self.state.ensure_visible(len, visible);
-        if self.selected_actual_idx() != before {
-            self.fire_selection_changed();
-        }
-    }
-
-    fn jump_bottom(&mut self) {
-        let before = self.selected_actual_idx();
-        let len = self.visible_len();
-        let visible = self.visible_rows(len);
-        self.state.jump_bottom(len, visible);
-        self.skip_disabled_up_clamped();
         self.state.ensure_visible(len, visible);
         if self.selected_actual_idx() != before {
             self.fire_selection_changed();
@@ -1268,6 +1236,12 @@ impl BottomPaneView for ListSelectionView {
             !search_field_visible || !is_plain_text_key_event(key_event);
         let allow_plain_char_actions =
             !self.on_demand_search_active() || !is_plain_text_key_event(key_event);
+        if allow_plain_char_navigation
+            && let Some(action) = self.keymap.vertical_action_for(key_event)
+        {
+            self.navigate(action);
+            return;
+        }
 
         match key_event {
             _ if self
@@ -1277,24 +1251,6 @@ impl BottomPaneView for ListSelectionView {
                 && self.selected_item_has_toggle() =>
             {
                 self.toggle_selected();
-            }
-            _ if allow_plain_char_navigation && self.keymap.move_up.is_pressed(key_event) => {
-                self.move_up()
-            }
-            _ if allow_plain_char_navigation && self.keymap.move_down.is_pressed(key_event) => {
-                self.move_down()
-            }
-            _ if allow_plain_char_navigation && self.keymap.page_up.is_pressed(key_event) => {
-                self.page_up()
-            }
-            _ if allow_plain_char_navigation && self.keymap.page_down.is_pressed(key_event) => {
-                self.page_down()
-            }
-            _ if allow_plain_char_navigation && self.keymap.jump_top.is_pressed(key_event) => {
-                self.jump_top()
-            }
-            _ if allow_plain_char_navigation && self.keymap.jump_bottom.is_pressed(key_event) => {
-                self.jump_bottom()
             }
             _ if allow_plain_char_navigation
                 && self.tabs_enabled()
