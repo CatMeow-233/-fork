@@ -52,7 +52,6 @@ use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::text::Span;
 use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
@@ -652,7 +651,6 @@ impl Renderable for MultiSelectPicker {
 pub(crate) struct MultiSelectPickerBuilder {
     title: String,
     subtitle: Option<String>,
-    instructions: Vec<Span<'static>>,
     items: Vec<MultiSelectItem>,
     ordering_enabled: bool,
     require_selection: bool,
@@ -670,7 +668,6 @@ impl MultiSelectPickerBuilder {
         Self {
             title,
             subtitle,
-            instructions: Vec::new(),
             items: Vec::new(),
             ordering_enabled: false,
             require_selection: false,
@@ -727,7 +724,6 @@ impl MultiSelectPickerBuilder {
     /// Sets a callback invoked whenever an item's state changes.
     ///
     /// This includes both toggles and reordering operations.
-    #[allow(dead_code)]
     pub fn on_change<F>(mut self, callback: F) -> Self
     where
         F: Fn(&[MultiSelectItem], &AppEventSender) + Send + Sync + 'static,
@@ -773,33 +769,28 @@ impl MultiSelectPickerBuilder {
             header.push(Paragraph::new(subtitle.dim()).wrap(Wrap { trim: false }));
         }
 
-        let instructions = if self.instructions.is_empty() {
-            let mut spans = vec![key_hint::plain(KeyCode::Char(' ')).into(), " toggle".dim()];
-            if self.ordering_enabled
-                && let (Some(left), Some(right)) = (
-                    self.keymap.primary_hint(ListAction::MoveLeft),
-                    self.keymap.primary_hint(ListAction::MoveRight),
-                )
-            {
+        let mut spans = vec![key_hint::plain(KeyCode::Char(' ')).into(), " toggle".dim()];
+        if self.ordering_enabled
+            && let (Some(left), Some(right)) = (
+                self.keymap.primary_hint(ListAction::MoveLeft),
+                self.keymap.primary_hint(ListAction::MoveRight),
+            )
+        {
+            spans.push(" · ".dim());
+            spans.extend(key_hint::key_label_spans(&format!(
+                "{}/{}",
+                left.display_label(),
+                right.display_label()
+            )));
+            spans.push(" reorder".dim());
+        }
+        for (action, label) in [(ListAction::Accept, "save"), (ListAction::Cancel, "cancel")] {
+            if let Some(hint) = self.keymap.primary_hint(action) {
                 spans.push(" · ".dim());
-                spans.extend(key_hint::key_label_spans(&format!(
-                    "{}/{}",
-                    left.display_label(),
-                    right.display_label()
-                )));
-                spans.push(" reorder".dim());
+                spans.extend(hint.spans());
+                spans.push(format!(" {label}").dim());
             }
-            for (action, label) in [(ListAction::Accept, "save"), (ListAction::Cancel, "cancel")] {
-                if let Some(hint) = self.keymap.primary_hint(action) {
-                    spans.push(" · ".dim());
-                    spans.extend(hint.spans());
-                    spans.push(format!(" {label}").dim());
-                }
-            }
-            spans
-        } else {
-            self.instructions
-        };
+        }
 
         let mut view = MultiSelectPicker {
             items: self.items,
@@ -807,7 +798,7 @@ impl MultiSelectPickerBuilder {
             complete: false,
             app_event_tx: self.app_event_tx,
             header: Box::new(header),
-            footer_hint: Line::from(instructions),
+            footer_hint: Line::from(spans),
             ordering_enabled: self.ordering_enabled,
             require_selection: self.require_selection,
             keymap: self.keymap,
