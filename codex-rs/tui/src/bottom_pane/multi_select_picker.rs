@@ -250,10 +250,6 @@ impl MultiSelectPicker {
     }
 
     /// Returns the maximum number of rows that can be displayed at once.
-    fn max_visible_rows(len: usize) -> usize {
-        MAX_POPUP_ROWS.min(len.max(1))
-    }
-
     fn footer_lines(&self, width: u16) -> Vec<Line<'_>> {
         wrap_styled_line(&self.footer_hint, width.saturating_sub(/*rhs*/ 2))
     }
@@ -488,7 +484,7 @@ impl BottomPaneView for MultiSelectPicker {
         {
             let len = self.visible_len();
             self.state
-                .apply_vertical_action(action, len, Self::max_visible_rows(len));
+                .apply_vertical_action(action, len, picker_rows::visible_rows(len));
             return;
         }
 

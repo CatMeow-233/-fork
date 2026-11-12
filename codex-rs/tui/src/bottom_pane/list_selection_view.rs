@@ -922,7 +922,10 @@ impl ListSelectionView {
                 self.skip_disabled_up_clamped();
             }
             // `vertical_action_for` yields only the six actions above.
-            _ => return,
+            ListAction::MoveLeft
+            | ListAction::MoveRight
+            | ListAction::Accept
+            | ListAction::Cancel => return,
         }
         self.state.ensure_visible(len, visible);
         if self.selected_actual_idx() != before {

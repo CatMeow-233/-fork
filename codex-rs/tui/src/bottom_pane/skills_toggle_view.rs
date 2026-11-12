@@ -88,10 +88,6 @@ impl SkillsToggleView {
         self.filtered_indices.len()
     }
 
-    fn max_visible_rows(len: usize) -> usize {
-        MAX_POPUP_ROWS.min(len.max(1))
-    }
-
     fn apply_filter(&mut self) {
         super::picker_rows::apply_search_filter(
             &self.items,
@@ -173,7 +169,7 @@ impl BottomPaneView for SkillsToggleView {
         {
             let len = self.visible_len();
             self.state
-                .apply_vertical_action(action, len, Self::max_visible_rows(len));
+                .apply_vertical_action(action, len, super::picker_rows::visible_rows(len));
             return;
         }
 

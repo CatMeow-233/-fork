@@ -2,6 +2,8 @@
 //!
 //! These adapters keep domain-specific state and save policies with their views.
 //! Measurement and painting share columns, wrapping, and overflow spacer rows.
+//! The module also holds the shared search filter, the scroll window size, and
+//! the hint-footer frame used by the toggle pickers.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -90,6 +92,11 @@ pub(super) fn render_rows_single_line(
     rendered.lines.saturating_add(/*rhs*/ 2).min(area.height)
 }
 
+/// Rows of the scroll window for a picker list of `len` items.
+pub(super) fn visible_rows(len: usize) -> usize {
+    MAX_POPUP_ROWS.min(len.max(1))
+}
+
 /// Filter `items` by `query`, best score first with ties broken by name, and keep
 /// the selected item selected while it still matches.
 pub(super) fn apply_search_filter<T>(
@@ -125,7 +132,7 @@ pub(super) fn apply_search_filter<T>(
         .and_then(|actual_idx| filtered.iter().position(|idx| *idx == actual_idx))
         .or_else(|| (len > 0).then_some(0));
     state.clamp_selection(len);
-    state.ensure_visible(len, MAX_POPUP_ROWS.min(len.max(1)));
+    state.ensure_visible(len, visible_rows(len));
 }
 
 /// Paint the picker surface above a dim, wrapped key-hint footer and return the

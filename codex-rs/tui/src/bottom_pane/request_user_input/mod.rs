@@ -100,7 +100,8 @@ fn format_auto_resolution_remaining(remaining: Duration) -> String {
     format!("{minutes}m {seconds:02}s")
 }
 
-/// Notes text captured from a question overlay's composer.
+/// Composer draft saved per question: request_user_input notes and freeform
+/// answers, and MCP elicitation text-field answers.
 #[derive(Default, Clone, PartialEq)]
 pub(super) struct ComposerDraft {
     pub(super) text: String,
