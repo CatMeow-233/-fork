@@ -1713,36 +1713,6 @@ impl RuntimeKeymap {
             chord_hints: Arc::clone(&chords),
         };
 
-        for (configured, bindings) in [
-            (keymap.agents.resume.as_ref(), &mut agents.resume),
-            (keymap.agents.search.as_ref(), &mut agents.search),
-            (keymap.agents.new_task.as_ref(), &mut agents.new_task),
-            (
-                keymap.agents.new_worktree.as_ref(),
-                &mut agents.new_worktree,
-            ),
-            (keymap.agents.fork.as_ref(), &mut agents.fork),
-            (keymap.agents.rename.as_ref(), &mut agents.rename),
-            (keymap.agents.stop.as_ref(), &mut agents.stop),
-            (keymap.agents.archive.as_ref(), &mut agents.archive),
-            (keymap.agents.delete.as_ref(), &mut agents.delete),
-            (keymap.agents.hide.as_ref(), &mut agents.hide),
-            (keymap.agents.toggle_pin.as_ref(), &mut agents.toggle_pin),
-            (
-                keymap.agents.toggle_grouping.as_ref(),
-                &mut agents.toggle_grouping,
-            ),
-        ] {
-            if configured.is_none() {
-                bindings.retain(|binding| {
-                    !chords.bindings.iter().any(|chord| {
-                        chord.action.context == KeymapContext::List
-                            && chord.chord.prefix == *binding
-                    })
-                });
-            }
-        }
-
         let mut resolved = Self {
             app,
             chords,
