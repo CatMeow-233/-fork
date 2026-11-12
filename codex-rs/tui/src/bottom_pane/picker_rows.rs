@@ -7,6 +7,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 use super::picker_style;
+use super::popup_consts::MAX_POPUP_ROWS;
 use super::scroll_state::ScrollState;
 use super::selection_picker_layout::PickerLayoutSizes;
 use super::selection_picker_layout::picker_areas;
@@ -78,6 +79,44 @@ pub(super) fn render_rows_single_line(
     );
     picker_style::render_scroll_indicators(area, buf, rendered);
     rendered.lines.saturating_add(/*rhs*/ 2).min(area.height)
+}
+
+/// Filter `items` by `query`, best score first with ties broken by name, and keep
+/// the selected item selected while it still matches.
+pub(super) fn apply_search_filter<T>(
+    items: &[T],
+    query: &str,
+    name: impl Fn(&T) -> &str,
+    score: impl Fn(&str, &T) -> Option<i32>,
+    filtered: &mut Vec<usize>,
+    state: &mut ScrollState,
+) {
+    let previously_selected = state
+        .selected_idx
+        .and_then(|visible_idx| filtered.get(visible_idx).copied());
+
+    let filter = query.trim();
+    if filter.is_empty() {
+        *filtered = (0..items.len()).collect();
+    } else {
+        let mut matches: Vec<(usize, i32)> = items
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, item)| score(filter, item).map(|score| (idx, score)))
+            .collect();
+        matches.sort_by(|a, b| {
+            a.1.cmp(&b.1)
+                .then_with(|| name(&items[a.0]).cmp(name(&items[b.0])))
+        });
+        *filtered = matches.into_iter().map(|(idx, _score)| idx).collect();
+    }
+
+    let len = filtered.len();
+    state.selected_idx = previously_selected
+        .and_then(|actual_idx| filtered.iter().position(|idx| *idx == actual_idx))
+        .or_else(|| (len > 0).then_some(0));
+    state.clamp_selection(len);
+    state.ensure_visible(len, MAX_POPUP_ROWS.min(len.max(1)));
 }
 
 /// Keep headers and search above a list, yielding optional gaps on short screens.

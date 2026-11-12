@@ -234,47 +234,14 @@ impl MultiSelectPicker {
     /// fuzzy match score. Attempts to preserve the current selection if it
     /// still matches the filter.
     fn apply_filter(&mut self) {
-        // Filter + sort while preserving the current selection when possible.
-        let previously_selected = self
-            .state
-            .selected_idx
-            .and_then(|visible_idx| self.filtered_indices.get(visible_idx).copied());
-
-        let filter = self.search_query.trim();
-        if filter.is_empty() {
-            self.filtered_indices = (0..self.items.len()).collect();
-        } else {
-            let mut matches: Vec<(usize, i32)> = Vec::new();
-            for (idx, item) in self.items.iter().enumerate() {
-                let display_name = item.name.as_str();
-                if let Some((_indices, score)) = match_item(filter, display_name, &item.name) {
-                    matches.push((idx, score));
-                }
-            }
-
-            matches.sort_by(|a, b| {
-                a.1.cmp(&b.1).then_with(|| {
-                    let an = self.items[a.0].name.as_str();
-                    let bn = self.items[b.0].name.as_str();
-                    an.cmp(bn)
-                })
-            });
-
-            self.filtered_indices = matches.into_iter().map(|(idx, _score)| idx).collect();
-        }
-
-        let len = self.filtered_indices.len();
-        self.state.selected_idx = previously_selected
-            .and_then(|actual_idx| {
-                self.filtered_indices
-                    .iter()
-                    .position(|idx| *idx == actual_idx)
-            })
-            .or_else(|| (len > 0).then_some(0));
-
-        let visible = Self::max_visible_rows(len);
-        self.state.clamp_selection(len);
-        self.state.ensure_visible(len, visible);
+        picker_rows::apply_search_filter(
+            &self.items,
+            &self.search_query,
+            |item| item.name.as_str(),
+            |filter, item| fuzzy_match(&item.name, filter).map(|(_, score)| score),
+            &mut self.filtered_indices,
+            &mut self.state,
+        );
     }
 
     /// Returns the number of items visible after filtering.
@@ -814,38 +781,6 @@ impl MultiSelectPickerBuilder {
         view.update_preview_line();
         view
     }
-}
-
-/// Performs fuzzy matching on an item against a filter string.
-///
-/// Tries to match against the display name first, then falls back to name if different. Returns
-/// the matching character indices (if matched on display name) and a score for sorting.
-///
-/// # Arguments
-///
-/// * `filter` - The search query to match against
-/// * `display_name` - The primary name to match (shown to user)
-/// * `name` - A secondary/canonical name to try if display name doesn't match
-///
-/// # Returns
-///
-/// * `Some((Some(indices), score))` - Matched on display name with highlight indices
-/// * `Some((None, score))` - Matched on skill name only (no highlights for display)
-/// * `None` - No match
-pub(crate) fn match_item(
-    filter: &str,
-    display_name: &str,
-    name: &str,
-) -> Option<(Option<Vec<usize>>, i32)> {
-    if let Some((indices, score)) = fuzzy_match(display_name, filter) {
-        return Some((Some(indices), score));
-    }
-    if display_name != name
-        && let Some((_indices, score)) = fuzzy_match(name, filter)
-    {
-        return Some((None, score));
-    }
-    None
 }
 
 #[cfg(test)]

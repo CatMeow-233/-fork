@@ -97,48 +97,16 @@ impl SkillsToggleView {
     }
 
     fn apply_filter(&mut self) {
-        // Filter + sort while preserving the current selection when possible.
-        let previously_selected = self
-            .state
-            .selected_idx
-            .and_then(|visible_idx| self.filtered_indices.get(visible_idx).copied());
-
-        let filter = self.search_query.trim();
-        if filter.is_empty() {
-            self.filtered_indices = (0..self.items.len()).collect();
-        } else {
-            let mut matches: Vec<(usize, i32)> = Vec::new();
-            for (idx, item) in self.items.iter().enumerate() {
-                let display_name = item.name.as_str();
-                if let Some((_indices, score)) = match_skill(filter, display_name, &item.skill_name)
-                {
-                    matches.push((idx, score));
-                }
-            }
-
-            matches.sort_by(|a, b| {
-                a.1.cmp(&b.1).then_with(|| {
-                    let an = self.items[a.0].name.as_str();
-                    let bn = self.items[b.0].name.as_str();
-                    an.cmp(bn)
-                })
-            });
-
-            self.filtered_indices = matches.into_iter().map(|(idx, _score)| idx).collect();
-        }
-
-        let len = self.filtered_indices.len();
-        self.state.selected_idx = previously_selected
-            .and_then(|actual_idx| {
-                self.filtered_indices
-                    .iter()
-                    .position(|idx| *idx == actual_idx)
-            })
-            .or_else(|| (len > 0).then_some(0));
-
-        let visible = Self::max_visible_rows(len);
-        self.state.clamp_selection(len);
-        self.state.ensure_visible(len, visible);
+        super::picker_rows::apply_search_filter(
+            &self.items,
+            &self.search_query,
+            |item| item.name.as_str(),
+            |filter, item| {
+                match_skill(filter, &item.name, &item.skill_name).map(|(_, score)| score)
+            },
+            &mut self.filtered_indices,
+            &mut self.state,
+        );
     }
 
     fn build_rows(&self) -> Vec<GenericDisplayRow> {
