@@ -891,7 +891,7 @@ impl ListSelectionView {
             .map(|(idx, _)| idx)
     }
 
-    /// Moves the selection, skips disabled rows in the travel direction, and reports a change.
+    /// Moves the selection, steps past disabled rows, and reports a change.
     fn navigate(&mut self, action: ListAction) {
         let before = self.selected_actual_idx();
         let len = self.visible_len();
