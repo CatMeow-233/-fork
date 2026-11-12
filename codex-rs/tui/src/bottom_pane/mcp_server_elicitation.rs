@@ -522,47 +522,29 @@ fn parse_field(
     property: McpElicitationPrimitiveSchema,
     required: bool,
 ) -> Option<McpServerElicitationField> {
-    match property {
-        McpElicitationPrimitiveSchema::String(schema) => {
-            let label = schema.title.unwrap_or_else(|| id.to_string());
-            let prompt = schema.description.unwrap_or_else(|| label.clone());
-            Some(McpServerElicitationField {
-                id: id.to_string(),
-                label,
-                prompt,
-                required,
-                input: McpServerElicitationFieldInput::Text { secret: false },
-            })
-        }
-        McpElicitationPrimitiveSchema::Boolean(schema) => {
-            let label = schema.title.unwrap_or_else(|| id.to_string());
-            let prompt = schema.description.unwrap_or_else(|| label.clone());
-            let default_idx = schema.default.map(|value| if value { 0 } else { 1 });
-            let options = [true, false]
-                .into_iter()
-                .map(|value| {
-                    let label = if value { "True" } else { "False" }.to_string();
-                    McpServerElicitationOption {
-                        label,
-                        description: None,
-                        value: Value::Bool(value),
-                    }
-                })
-                .collect();
-            Some(McpServerElicitationField {
-                id: id.to_string(),
-                label,
-                prompt,
-                required,
-                input: McpServerElicitationFieldInput::Select {
-                    options,
-                    default_idx,
-                },
-            })
-        }
+    let option = |label: String, value: Value| McpServerElicitationOption {
+        label,
+        description: None,
+        value,
+    };
+    let (title, description, input) = match property {
+        McpElicitationPrimitiveSchema::String(schema) => (
+            schema.title,
+            schema.description,
+            McpServerElicitationFieldInput::Text { secret: false },
+        ),
+        McpElicitationPrimitiveSchema::Boolean(schema) => (
+            schema.title,
+            schema.description,
+            McpServerElicitationFieldInput::Select {
+                options: vec![
+                    option("True".to_string(), Value::Bool(true)),
+                    option("False".to_string(), Value::Bool(false)),
+                ],
+                default_idx: schema.default.map(|value| if value { 0 } else { 1 }),
+            },
+        ),
         McpElicitationPrimitiveSchema::Enum(McpElicitationEnumSchema::Legacy(schema)) => {
-            let label = schema.title.unwrap_or_else(|| id.to_string());
-            let prompt = schema.description.unwrap_or_else(|| label.clone());
             let default_idx = schema
                 .default
                 .as_ref()
@@ -572,43 +554,23 @@ fn parse_field(
                 .enum_
                 .into_iter()
                 .enumerate()
-                .map(|(idx, value)| McpServerElicitationOption {
-                    label: enum_names
+                .map(|(idx, value)| {
+                    let label = enum_names
                         .get(idx)
                         .cloned()
-                        .unwrap_or_else(|| value.clone()),
-                    description: None,
-                    value: Value::String(value),
+                        .unwrap_or_else(|| value.clone());
+                    option(label, Value::String(value))
                 })
                 .collect();
-            Some(McpServerElicitationField {
-                id: id.to_string(),
-                label,
-                prompt,
-                required,
-                input: McpServerElicitationFieldInput::Select {
-                    options,
-                    default_idx,
-                },
-            })
+            let input = McpServerElicitationFieldInput::Select {
+                options,
+                default_idx,
+            };
+            (schema.title, schema.description, input)
         }
-        McpElicitationPrimitiveSchema::Enum(McpElicitationEnumSchema::SingleSelect(schema)) => {
-            parse_single_select_field(id, schema, required)
-        }
-        McpElicitationPrimitiveSchema::Number(_)
-        | McpElicitationPrimitiveSchema::Enum(McpElicitationEnumSchema::MultiSelect(_)) => None,
-    }
-}
-
-fn parse_single_select_field(
-    id: &str,
-    schema: McpElicitationSingleSelectEnumSchema,
-    required: bool,
-) -> Option<McpServerElicitationField> {
-    match schema {
-        McpElicitationSingleSelectEnumSchema::Untitled(schema) => {
-            let label = schema.title.unwrap_or_else(|| id.to_string());
-            let prompt = schema.description.unwrap_or_else(|| label.clone());
+        McpElicitationPrimitiveSchema::Enum(McpElicitationEnumSchema::SingleSelect(
+            McpElicitationSingleSelectEnumSchema::Untitled(schema),
+        )) => {
             let default_idx = schema
                 .default
                 .as_ref()
@@ -616,26 +578,17 @@ fn parse_single_select_field(
             let options = schema
                 .enum_
                 .into_iter()
-                .map(|value| McpServerElicitationOption {
-                    label: value.clone(),
-                    description: None,
-                    value: Value::String(value),
-                })
+                .map(|value| option(value.clone(), Value::String(value)))
                 .collect();
-            Some(McpServerElicitationField {
-                id: id.to_string(),
-                label,
-                prompt,
-                required,
-                input: McpServerElicitationFieldInput::Select {
-                    options,
-                    default_idx,
-                },
-            })
+            let input = McpServerElicitationFieldInput::Select {
+                options,
+                default_idx,
+            };
+            (schema.title, schema.description, input)
         }
-        McpElicitationSingleSelectEnumSchema::Titled(schema) => {
-            let label = schema.title.unwrap_or_else(|| id.to_string());
-            let prompt = schema.description.unwrap_or_else(|| label.clone());
+        McpElicitationPrimitiveSchema::Enum(McpElicitationEnumSchema::SingleSelect(
+            McpElicitationSingleSelectEnumSchema::Titled(schema),
+        )) => {
             let default_idx = schema.default.as_ref().and_then(|value| {
                 schema
                     .one_of
@@ -645,24 +598,28 @@ fn parse_single_select_field(
             let options = schema
                 .one_of
                 .into_iter()
-                .map(|entry| McpServerElicitationOption {
-                    label: entry.title,
-                    description: None,
-                    value: Value::String(entry.const_),
-                })
+                .map(|entry| option(entry.title, Value::String(entry.const_)))
                 .collect();
-            Some(McpServerElicitationField {
-                id: id.to_string(),
-                label,
-                prompt,
-                required,
-                input: McpServerElicitationFieldInput::Select {
-                    options,
-                    default_idx,
-                },
-            })
+            let input = McpServerElicitationFieldInput::Select {
+                options,
+                default_idx,
+            };
+            (schema.title, schema.description, input)
         }
-    }
+        McpElicitationPrimitiveSchema::Number(_)
+        | McpElicitationPrimitiveSchema::Enum(McpElicitationEnumSchema::MultiSelect(_)) => {
+            return None;
+        }
+    };
+    let label = title.unwrap_or_else(|| id.to_string());
+    let prompt = description.unwrap_or_else(|| label.clone());
+    Some(McpServerElicitationField {
+        id: id.to_string(),
+        label,
+        prompt,
+        required,
+        input,
+    })
 }
 
 pub(crate) struct McpServerElicitationOverlay {
