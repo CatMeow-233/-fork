@@ -506,6 +506,7 @@ impl RequestUserInputOverlay {
         measure_rows_height(&rows, &state, rows.len(), width.max(1))
     }
 
+    /// Options prefer their full wrapped height, which `layout_sections` relies on.
     pub(super) fn options_preferred_height(&self, width: u16) -> u16 {
         self.options_required_height(width)
     }
