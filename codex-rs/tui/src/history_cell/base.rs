@@ -115,7 +115,7 @@ impl CompositeHistoryCell {
         Self { parts }
     }
 
-    /// Concatenates each part's non-empty lines, separating parts with one blank line.
+    /// Joins the lines of every part that renders any, with one blank line between those parts.
     fn join_parts<T: From<&'static str>>(
         &self,
         render: impl Fn(&dyn HistoryCell) -> Vec<T>,

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::chatwidget::tests::helpers::normalize_agent_center_snapshot;
+use crate::render::renderable::Renderable;
 use crate::test_support::PathBufExt;
 use crate::test_support::test_path_buf;
 use crossterm::event::KeyCode;

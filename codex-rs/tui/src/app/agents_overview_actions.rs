@@ -10,9 +10,8 @@ use crate::app_server_session::AppServerSession;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::chatwidget::ChatWidget;
-use crate::render::renderable::Renderable;
+use crate::render::renderable::WrappedLines;
 use crate::tui;
-use crate::wrapping::word_wrap_lines;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SessionSource;
@@ -22,32 +21,12 @@ use codex_app_server_protocol::ThreadSectionMoveResponse;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::SubAgentSource;
 use codex_state::PINNED_THREAD_SECTION_ID;
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 use ratatui::style::Stylize;
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
 use std::collections::HashSet;
 use std::future::Future;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
-
-struct LifecycleHeader(Vec<Line<'static>>);
-
-impl Renderable for LifecycleHeader {
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        Renderable::render(
-            &Paragraph::new(word_wrap_lines(&self.0, usize::from(area.width))),
-            area,
-            buf,
-        );
-    }
-
-    fn desired_height(&self, width: u16) -> u16 {
-        word_wrap_lines(&self.0, usize::from(width)).len() as u16
-    }
-}
 
 /// Keep browsing responsive without queuing actions against a locked server.
 async fn run_lifecycle_modal<T>(
@@ -214,7 +193,7 @@ impl App {
             ),
         };
         self.chat_widget.show_selection_view(SelectionViewParams {
-            header: Box::new(LifecycleHeader(vec![
+            header: Box::new(WrappedLines(vec![
                 title.bold().into(),
                 description.dim().into(),
             ])),
@@ -421,7 +400,7 @@ impl App {
                 );
             }
             self.chat_widget.show_selection_view(SelectionViewParams {
-                header: Box::new(LifecycleHeader(header)),
+                header: Box::new(WrappedLines(header)),
                 items: vec![SelectionItem {
                     name: "Back to agents".to_string(),
                     dismiss_on_select: true,

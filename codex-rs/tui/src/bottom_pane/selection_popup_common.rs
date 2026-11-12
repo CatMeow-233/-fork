@@ -123,6 +123,9 @@ pub(crate) fn render_menu_surface(area: Rect, buf: &mut Buffer) -> Rect {
 }
 
 /// Clear `area`, then draw `content` on a menu surface fitted to its desired height.
+///
+/// `content` is drawn over the whole panel rather than the inset rect: it brings
+/// its own insets and padding, and row highlights span the full panel.
 pub(crate) fn render_menu_panel(
     content: &impl crate::render::renderable::Renderable,
     area: Rect,

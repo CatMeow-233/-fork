@@ -2,7 +2,6 @@
 //! Retries preserve the launch-resolved local presentation settings from the first attempt.
 
 use crate::app::AppExitInfo;
-use crate::app::ExitReason;
 use crate::app_server_session::AppServerSession;
 use crate::app_server_session::AppServerStartedThread;
 use crate::app_server_session::ForkPermissionMode;
@@ -124,14 +123,7 @@ pub(crate) async fn cancel_session_start(app_server: AppServerSession) -> AppExi
     if let Err(err) = app_server.shutdown().await {
         tracing::warn!("app-server shutdown failed: {err}");
     }
-    AppExitInfo {
-        token_usage: Default::default(),
-        thread_id: None,
-        resume_hint: None,
-        disconnect_info: None,
-        update_action: None,
-        exit_reason: ExitReason::UserRequested,
-    }
+    AppExitInfo::user_requested()
 }
 
 fn session_start_error(

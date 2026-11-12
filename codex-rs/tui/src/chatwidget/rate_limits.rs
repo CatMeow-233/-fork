@@ -131,7 +131,7 @@ pub(crate) fn get_limits_duration(windows_minutes: i64) -> Option<String> {
     }
 }
 
-pub(crate) fn fallback_limit_label(is_secondary: bool) -> &'static str {
+fn fallback_limit_label(is_secondary: bool) -> &'static str {
     if is_secondary {
         SECONDARY_LIMIT_FALLBACK_LABEL
     } else {
