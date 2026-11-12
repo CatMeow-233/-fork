@@ -7,7 +7,6 @@ use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::Wrap;
@@ -15,21 +14,19 @@ use ratatui::widgets::Wrap;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::popup_consts::picker_hint_line_for_keymap;
-use crate::key_hint;
 use crate::key_hint::KeyBindingListExt;
-use crate::keymap::ListAction;
 use crate::keymap::ListKeymap;
 use crate::render::Insets;
 use crate::render::RectExt as _;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
-use crate::style::user_message_style;
 
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
 use super::picker_rows::measure_rows_height;
 use super::picker_rows::render_rows;
 use super::popup_consts::MAX_POPUP_ROWS;
+use super::popup_consts::toggle_hint_line;
 use super::scroll_state::ScrollState;
 use super::selection_popup_common::GenericDisplayRow;
 
@@ -266,7 +263,7 @@ impl MemoriesSettingsView {
         if self.reset_confirmation.is_some() {
             picker_hint_line_for_keymap(&self.keymap)
         } else {
-            memories_settings_hint_line(&self.keymap)
+            toggle_hint_line(&self.keymap, "save/select", "cancel")
         }
     }
 }
@@ -358,20 +355,7 @@ impl Renderable for MemoriesSettingsView {
             return;
         }
 
-        let hint = self.footer_hint();
-        let hint_lines = super::selection_popup_common::wrap_styled_line(
-            &hint,
-            area.width.saturating_sub(/*rhs*/ 2),
-        );
-        let [content_area, footer_area] = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(hint_lines.len() as u16),
-        ])
-        .areas(area);
-
-        Block::default()
-            .style(user_message_style())
-            .render(content_area, buf);
+        let content_area = super::picker_rows::render_hint_frame(area, buf, &self.footer_hint());
 
         let header = if self.reset_confirmation.is_some() {
             self.reset_confirmation_header()
@@ -416,14 +400,6 @@ impl Renderable for MemoriesSettingsView {
             self.docs_link.clone().render(docs_area, buf);
             crate::terminal_hyperlinks::mark_url_hyperlink(buf, docs_area, MEMORIES_DOC_URL);
         }
-
-        let hint_area = Rect {
-            x: footer_area.x + 2,
-            y: footer_area.y,
-            width: footer_area.width.saturating_sub(2),
-            height: footer_area.height,
-        };
-        Paragraph::new(hint_lines).dim().render(hint_area, buf);
     }
 
     fn desired_height(&self, width: u16) -> u16 {
@@ -442,29 +418,11 @@ impl Renderable for MemoriesSettingsView {
         };
         let mut height = header.desired_height(width.saturating_sub(4));
         height = height.saturating_add(rows_height + 4 + docs_height);
-        height.saturating_add(
-            super::selection_popup_common::wrap_styled_line(
-                &self.footer_hint(),
-                width.saturating_sub(/*rhs*/ 2),
-            )
-            .len() as u16,
-        )
+        height.saturating_add(super::picker_rows::hint_frame_height(
+            width,
+            &self.footer_hint(),
+        ))
     }
-}
-
-fn memories_settings_hint_line(keymap: &ListKeymap) -> Line<'static> {
-    let mut spans = vec![key_hint::plain(KeyCode::Char(' ')).into(), " toggle".into()];
-    if let Some(accept) = keymap.primary_hint(ListAction::Accept) {
-        spans.push(" · ".into());
-        spans.extend(accept.spans());
-        spans.push(" save/select".into());
-    }
-    if let Some(cancel) = keymap.primary_hint(ListAction::Cancel) {
-        spans.push(" · ".into());
-        spans.extend(cancel.spans());
-        spans.push(" cancel".into());
-    }
-    Line::from(spans)
 }
 
 #[cfg(test)]

@@ -16,31 +16,25 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Constraint;
-use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
-use ratatui::widgets::Widget;
 use ratatui::widgets::Wrap;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
-use crate::key_hint;
 use crate::key_hint::KeyBindingListExt;
-use crate::keymap::ListAction;
 use crate::keymap::ListKeymap;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
-use crate::style::user_message_style;
 
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
 use super::picker_rows::measure_rows_height;
 use super::picker_rows::render_rows;
 use super::popup_consts::MAX_POPUP_ROWS;
+use super::popup_consts::toggle_hint_line;
 use super::scroll_state::ScrollState;
 use super::selection_popup_common::GenericDisplayRow;
 
@@ -91,7 +85,7 @@ impl ExperimentalFeaturesView {
             state: ScrollState::new(),
             complete: false,
             app_event_tx,
-            footer_hint: experimental_popup_hint_line(&keymap),
+            footer_hint: toggle_hint_line(&keymap, "save", "save/close"),
             keymap,
         };
         view.initialize_selection();
@@ -384,20 +378,7 @@ impl Renderable for ExperimentalFeaturesView {
             return;
         }
 
-        let hint = self.current_hint();
-        let hint_lines = super::selection_popup_common::wrap_styled_line(
-            &hint,
-            area.width.saturating_sub(/*rhs*/ 2),
-        );
-        let [content_area, footer_area] = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(hint_lines.len() as u16),
-        ])
-        .areas(area);
-
-        Block::default()
-            .style(user_message_style())
-            .render(content_area, buf);
+        let content_area = super::picker_rows::render_hint_frame(area, buf, &self.current_hint());
 
         let header = self.header(content_area.width.saturating_sub(4));
         let header_height = header.desired_height(content_area.width.saturating_sub(4));
@@ -419,14 +400,6 @@ impl Renderable for ExperimentalFeaturesView {
                 "  No experimental features available for now",
             );
         }
-
-        let hint_area = Rect {
-            x: footer_area.x + 2,
-            y: footer_area.y,
-            width: footer_area.width.saturating_sub(2),
-            height: footer_area.height,
-        };
-        Paragraph::new(hint_lines).dim().render(hint_area, buf);
     }
 
     fn desired_height(&self, width: u16) -> u16 {
@@ -437,29 +410,11 @@ impl Renderable for ExperimentalFeaturesView {
             .header(width.saturating_sub(4))
             .desired_height(width.saturating_sub(4));
         height = height.saturating_add(rows_height + 3);
-        height.saturating_add(
-            super::selection_popup_common::wrap_styled_line(
-                &self.current_hint(),
-                width.saturating_sub(/*rhs*/ 2),
-            )
-            .len() as u16,
-        )
+        height.saturating_add(super::picker_rows::hint_frame_height(
+            width,
+            &self.current_hint(),
+        ))
     }
-}
-
-fn experimental_popup_hint_line(keymap: &ListKeymap) -> Line<'static> {
-    let mut spans = vec![key_hint::plain(KeyCode::Char(' ')).into(), " toggle".into()];
-    if let Some(accept) = keymap.primary_hint(ListAction::Accept) {
-        spans.push(" · ".into());
-        spans.extend(accept.spans());
-        spans.push(" save".into());
-    }
-    if let Some(cancel) = keymap.primary_hint(ListAction::Cancel) {
-        spans.push(" · ".into());
-        spans.extend(cancel.spans());
-        spans.push(" save/close".into());
-    }
-    Line::from(spans)
 }
 
 #[cfg(test)]

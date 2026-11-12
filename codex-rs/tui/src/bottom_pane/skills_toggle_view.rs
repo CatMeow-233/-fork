@@ -2,12 +2,9 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Constraint;
-use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
-use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 use ratatui::widgets::Wrap;
@@ -24,7 +21,6 @@ use crate::keymap::ListKeymap;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use crate::skills_helpers::match_skill;
-use crate::style::user_message_style;
 use codex_utils_path_uri::PathUri;
 
 use super::CancellationEvent;
@@ -239,13 +235,10 @@ impl Renderable for SkillsToggleView {
         let mut height = self.header.desired_height(width.saturating_sub(4));
         height = height.saturating_add(rows_height + 3);
         height = height.saturating_add(2);
-        height.saturating_add(
-            super::selection_popup_common::wrap_styled_line(
-                &self.footer_hint,
-                width.saturating_sub(/*rhs*/ 2),
-            )
-            .len() as u16,
-        )
+        height.saturating_add(super::picker_rows::hint_frame_height(
+            width,
+            &self.footer_hint,
+        ))
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -253,19 +246,7 @@ impl Renderable for SkillsToggleView {
             return;
         }
 
-        let hint_lines = super::selection_popup_common::wrap_styled_line(
-            &self.footer_hint,
-            area.width.saturating_sub(/*rhs*/ 2),
-        );
-        let [content_area, footer_area] = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(hint_lines.len() as u16),
-        ])
-        .areas(area);
-
-        Block::default()
-            .style(user_message_style())
-            .render(content_area, buf);
+        let content_area = super::picker_rows::render_hint_frame(area, buf, &self.footer_hint);
 
         let header_height = self
             .header
@@ -296,14 +277,6 @@ impl Renderable for SkillsToggleView {
                 "no matches",
             );
         }
-
-        let hint_area = Rect {
-            x: footer_area.x + 2,
-            y: footer_area.y,
-            width: footer_area.width.saturating_sub(2),
-            height: footer_area.height,
-        };
-        Paragraph::new(hint_lines).dim().render(hint_area, buf);
     }
 }
 

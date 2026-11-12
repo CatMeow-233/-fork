@@ -39,6 +39,26 @@ pub(crate) fn picker_hint_line_for_keymap(list_keymap: &ListKeymap) -> Line<'sta
     spans.into()
 }
 
+/// Toggle-list footer: space toggles, then the accept and cancel keys with their labels.
+pub(crate) fn toggle_hint_line(
+    keymap: &ListKeymap,
+    accept_label: &str,
+    cancel_label: &str,
+) -> Line<'static> {
+    let mut spans = vec![key_hint::plain(KeyCode::Char(' ')).into(), " toggle".into()];
+    for (action, label) in [
+        (ListAction::Accept, accept_label),
+        (ListAction::Cancel, cancel_label),
+    ] {
+        if let Some(hint) = keymap.primary_hint(action) {
+            spans.push(" · ".into());
+            spans.extend(hint.spans());
+            spans.push(format!(" {label}").into());
+        }
+    }
+    Line::from(spans)
+}
+
 pub(crate) fn accept_cancel_hint_line(
     accept: Option<ShortcutHint>,
     accept_label: &'static str,

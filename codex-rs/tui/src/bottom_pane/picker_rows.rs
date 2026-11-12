@@ -4,7 +4,14 @@
 //! Measurement and painting share columns, wrapping, and overflow spacer rows.
 
 use ratatui::buffer::Buffer;
+use ratatui::layout::Constraint;
+use ratatui::layout::Layout;
 use ratatui::layout::Rect;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::widgets::Block;
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::Widget;
 
 use super::picker_style;
 use super::popup_consts::MAX_POPUP_ROWS;
@@ -15,9 +22,11 @@ use super::selection_popup_common as rows;
 use super::selection_popup_common::ColumnWidthConfig;
 use super::selection_popup_common::ColumnWidthMode;
 use super::selection_popup_common::GenericDisplayRow;
+use super::selection_popup_common::wrap_styled_line;
 use super::selection_row_layout::SelectionDescriptionLayout;
 use crate::render::Insets;
 use crate::render::RectExt;
+use crate::style::user_message_style;
 
 const COLUMNS: ColumnWidthConfig = ColumnWidthConfig {
     mode: ColumnWidthMode::AutoAllRows,
@@ -117,6 +126,30 @@ pub(super) fn apply_search_filter<T>(
         .or_else(|| (len > 0).then_some(0));
     state.clamp_selection(len);
     state.ensure_visible(len, MAX_POPUP_ROWS.min(len.max(1)));
+}
+
+/// Paint the picker surface above a dim, wrapped key-hint footer and return the
+/// area left for the picker body.
+pub(super) fn render_hint_frame(area: Rect, buf: &mut Buffer, hint: &Line<'_>) -> Rect {
+    let hint_lines = wrap_styled_line(hint, area.width.saturating_sub(/*rhs*/ 2));
+    let [content_area, footer_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(hint_lines.len() as u16),
+    ])
+    .areas(area);
+    Block::default()
+        .style(user_message_style())
+        .render(content_area, buf);
+    let hint_area = footer_area.inset(Insets::tlbr(
+        /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
+    ));
+    Paragraph::new(hint_lines).dim().render(hint_area, buf);
+    content_area
+}
+
+/// Height of the footer that [`render_hint_frame`] draws at `width`.
+pub(super) fn hint_frame_height(width: u16, hint: &Line<'_>) -> u16 {
+    wrap_styled_line(hint, width.saturating_sub(/*rhs*/ 2)).len() as u16
 }
 
 /// Keep headers and search above a list, yielding optional gaps on short screens.
