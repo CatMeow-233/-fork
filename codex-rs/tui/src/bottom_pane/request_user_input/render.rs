@@ -5,7 +5,6 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
-use std::borrow::Cow;
 use std::time::Instant;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -18,6 +17,7 @@ use crate::bottom_pane::selection_popup_common::render_menu_surface;
 use crate::bottom_pane::selection_popup_common::render_rows;
 use crate::bottom_pane::selection_popup_common::wrap_styled_line;
 use crate::line_truncation::line_width;
+use crate::render::line_utils::line_to_static;
 use crate::render::renderable::Renderable;
 use crate::width::display_width;
 
@@ -30,34 +30,11 @@ const PROGRESS_ROW_HEIGHT: usize = 1;
 const SPACER_ROWS_WITH_NOTES: usize = 1;
 const SPACER_ROWS_NO_OPTIONS: usize = 0;
 
-struct UnansweredConfirmationData {
-    title_line: Line<'static>,
-    subtitle_line: Line<'static>,
-    hint_line: Line<'static>,
-    rows: Vec<crate::bottom_pane::selection_popup_common::GenericDisplayRow>,
-    state: ScrollState,
-}
-
 struct UnansweredConfirmationLayout {
     header_lines: Vec<Line<'static>>,
     hint_lines: Vec<Line<'static>>,
     rows: Vec<crate::bottom_pane::selection_popup_common::GenericDisplayRow>,
     state: ScrollState,
-}
-
-fn line_to_owned(line: Line<'_>) -> Line<'static> {
-    Line {
-        style: line.style,
-        alignment: line.alignment,
-        spans: line
-            .spans
-            .into_iter()
-            .map(|span| Span {
-                style: span.style,
-                content: Cow::Owned(span.content.into_owned()),
-            })
-            .collect(),
-    }
 }
 
 impl Renderable for RequestUserInputOverlay {
@@ -110,43 +87,54 @@ impl Renderable for RequestUserInputOverlay {
         self.render_ui_at(area, buf, Instant::now());
     }
 
+    /// Return the cursor position when editing notes, if visible.
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        self.cursor_pos_impl(area)
+        if self.confirm_unanswered_active() {
+            return None;
+        }
+        let has_options = self.has_options();
+        let notes_visible = self.notes_ui_visible();
+
+        if !self.focus_is_notes() {
+            return None;
+        }
+        if has_options && !notes_visible {
+            return None;
+        }
+        let content_area = menu_surface_inset(area);
+        if content_area.width == 0 || content_area.height == 0 {
+            return None;
+        }
+        let sections = self.layout_sections(content_area);
+        let input_area = sections.notes_area;
+        if input_area.width == 0 || input_area.height == 0 {
+            return None;
+        }
+        self.composer.cursor_pos(input_area)
     }
 }
 
 impl RequestUserInputOverlay {
-    fn unanswered_confirmation_data(&self) -> UnansweredConfirmationData {
+    fn unanswered_confirmation_layout(&self, width: u16) -> UnansweredConfirmationLayout {
         let unanswered = self.unanswered_question_count();
         let subtitle = format!(
             "{unanswered} unanswered question{}",
             if unanswered == 1 { "" } else { "s" }
         );
-        UnansweredConfirmationData {
-            title_line: Line::from(super::UNANSWERED_CONFIRM_TITLE.bold()),
-            subtitle_line: Line::from(subtitle.dim()),
-            hint_line: standard_popup_hint_line(),
-            rows: self.unanswered_confirmation_rows(),
-            state: self.confirm_unanswered.unwrap_or_default(),
-        }
-    }
-
-    fn unanswered_confirmation_layout(&self, width: u16) -> UnansweredConfirmationLayout {
-        let data = self.unanswered_confirmation_data();
         let content_width = width.max(1);
-        let mut header_lines = wrap_styled_line(&data.title_line, content_width);
-        let mut subtitle_lines = wrap_styled_line(&data.subtitle_line, content_width);
-        header_lines.append(&mut subtitle_lines);
-        let header_lines = header_lines.into_iter().map(line_to_owned).collect();
-        let hint_lines = wrap_styled_line(&data.hint_line, content_width)
-            .into_iter()
-            .map(line_to_owned)
-            .collect();
+        let wrap = |line: Line<'static>| -> Vec<Line<'static>> {
+            wrap_styled_line(&line, content_width)
+                .iter()
+                .map(line_to_static)
+                .collect()
+        };
+        let mut header_lines = wrap(Line::from(super::UNANSWERED_CONFIRM_TITLE.bold()));
+        header_lines.extend(wrap(Line::from(subtitle.dim())));
         UnansweredConfirmationLayout {
             header_lines,
-            hint_lines,
-            rows: data.rows,
-            state: data.state,
+            hint_lines: wrap(standard_popup_hint_line()),
+            rows: self.unanswered_confirmation_rows(),
+            state: self.confirm_unanswered.unwrap_or_default(),
         }
     }
 
@@ -359,32 +347,6 @@ impl RequestUserInputOverlay {
             };
             Paragraph::new(line).render(row_area, buf);
         }
-    }
-
-    /// Return the cursor position when editing notes, if visible.
-    pub(super) fn cursor_pos_impl(&self, area: Rect) -> Option<(u16, u16)> {
-        if self.confirm_unanswered_active() {
-            return None;
-        }
-        let has_options = self.has_options();
-        let notes_visible = self.notes_ui_visible();
-
-        if !self.focus_is_notes() {
-            return None;
-        }
-        if has_options && !notes_visible {
-            return None;
-        }
-        let content_area = menu_surface_inset(area);
-        if content_area.width == 0 || content_area.height == 0 {
-            return None;
-        }
-        let sections = self.layout_sections(content_area);
-        let input_area = sections.notes_area;
-        if input_area.width == 0 || input_area.height == 0 {
-            return None;
-        }
-        self.composer.cursor_pos(input_area)
     }
 
     /// Render the notes composer.
