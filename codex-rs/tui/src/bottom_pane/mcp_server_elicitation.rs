@@ -858,6 +858,35 @@ impl McpServerElicitationOverlay {
         wrap_plain_text_with_links(&self.current_prompt_text(), width)
     }
 
+    /// Stack the progress, prompt, input, and footer rows inside the menu surface.
+    fn section_areas(&self, content_area: Rect) -> [Rect; 4] {
+        let mut remaining = content_area.height;
+        let progress_height = u16::from(remaining > 0);
+        remaining = remaining.saturating_sub(progress_height);
+        let footer_lines = self.footer_tip_lines(content_area.width).len() as u16;
+        let footer_height = footer_lines.min(remaining.saturating_sub(1));
+        remaining = remaining.saturating_sub(footer_height);
+        let min_input_height = if self.current_field_is_select() {
+            u16::from(remaining > 0)
+        } else {
+            MIN_COMPOSER_HEIGHT.min(remaining)
+        };
+        remaining = remaining.saturating_sub(min_input_height);
+        let prompt_lines = self.wrapped_prompt_lines(content_area.width).len() as u16;
+        let prompt_height = prompt_lines.min(remaining);
+        let input_height = min_input_height.saturating_add(remaining.saturating_sub(prompt_height));
+        let mut y = content_area.y;
+        [progress_height, prompt_height, input_height, footer_height].map(|height| {
+            let area = Rect {
+                y,
+                height,
+                ..content_area
+            };
+            y = y.saturating_add(height);
+            area
+        })
+    }
+
     fn current_prompt_text(&self) -> String {
         let request_message = format_tool_approval_display_message(
             &self.request.message,
@@ -1315,52 +1344,8 @@ impl Renderable for McpServerElicitationOverlay {
         if content_area.width == 0 || content_area.height == 0 {
             return;
         }
-        let prompt_lines = self.wrapped_prompt_lines(content_area.width);
-        let footer_lines = self.footer_tip_lines(content_area.width);
-        let mut remaining = content_area.height;
-
-        let progress_height = u16::from(remaining > 0);
-        remaining = remaining.saturating_sub(progress_height);
-
-        let footer_height = (footer_lines.len() as u16).min(remaining.saturating_sub(1));
-        remaining = remaining.saturating_sub(footer_height);
-
-        let min_input_height = if self.current_field_is_select() {
-            u16::from(remaining > 0)
-        } else {
-            MIN_COMPOSER_HEIGHT.min(remaining)
-        };
-        let mut input_height = min_input_height;
-        remaining = remaining.saturating_sub(input_height);
-
-        let prompt_height = (prompt_lines.len() as u16).min(remaining);
-        remaining = remaining.saturating_sub(prompt_height);
-        input_height = input_height.saturating_add(remaining);
-
-        let progress_area = Rect {
-            x: content_area.x,
-            y: content_area.y,
-            width: content_area.width,
-            height: progress_height,
-        };
-        let prompt_area = Rect {
-            x: content_area.x,
-            y: progress_area.y.saturating_add(progress_area.height),
-            width: content_area.width,
-            height: prompt_height,
-        };
-        let input_area = Rect {
-            x: content_area.x,
-            y: prompt_area.y.saturating_add(prompt_area.height),
-            width: content_area.width,
-            height: input_height,
-        };
-        let footer_area = Rect {
-            x: content_area.x,
-            y: input_area.y.saturating_add(input_area.height),
-            width: content_area.width,
-            height: footer_height,
-        };
+        let [progress_area, prompt_area, input_area, footer_area] =
+            self.section_areas(content_area);
 
         let unanswered = self.required_unanswered_count();
         let progress_line = if self.field_count() > 0 {
@@ -1389,27 +1374,7 @@ impl Renderable for McpServerElicitationOverlay {
         if content_area.width == 0 || content_area.height == 0 {
             return None;
         }
-        let prompt_lines = self.wrapped_prompt_lines(content_area.width);
-        let footer_lines = self.footer_tip_lines(content_area.width);
-        let mut remaining = content_area.height;
-        remaining = remaining.saturating_sub(u16::from(remaining > 0));
-        let footer_height = (footer_lines.len() as u16).min(remaining.saturating_sub(1));
-        remaining = remaining.saturating_sub(footer_height);
-        let min_input_height = MIN_COMPOSER_HEIGHT.min(remaining);
-        let mut input_height = min_input_height;
-        remaining = remaining.saturating_sub(input_height);
-        let prompt_height = (prompt_lines.len() as u16).min(remaining);
-        remaining = remaining.saturating_sub(prompt_height);
-        input_height = input_height.saturating_add(remaining);
-        let input_area = Rect {
-            x: content_area.x,
-            y: content_area
-                .y
-                .saturating_add(1)
-                .saturating_add(prompt_height),
-            width: content_area.width,
-            height: input_height,
-        };
+        let [_, _, input_area, _] = self.section_areas(content_area);
         self.composer.cursor_pos(input_area)
     }
 }
