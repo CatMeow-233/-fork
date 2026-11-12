@@ -2123,36 +2123,75 @@ impl RuntimeKeymap {
                 ));
             }
         }
-        let minimize = &self.app.minimize_pane_width;
-        let maximize = &self.app.maximize_pane_width;
-        let equalize = &self.app.equalize_pane_widths;
-        let resize = &self.app.resize_panes;
-        #[cfg(unix)]
-        for (action, bindings) in [
-            ("global.change_host", &self.app.change_host),
-            ("global.open_agents", &self.app.open_agents),
-            ("global.focus_main_composer", &self.app.focus_main_composer),
+        // Workspace pane shortcuts stay live on the main surface, transcript, and activity list.
+        let global_panes = [
+            (
+                "global.focus_main_composer",
+                self.app.focus_main_composer.as_slice(),
+            ),
             (
                 "global.focus_sidebar_content",
-                &self.app.focus_sidebar_content,
+                self.app.focus_sidebar_content.as_slice(),
             ),
-            ("global.focus_sidebar_tabs", &self.app.focus_sidebar_tabs),
-            ("global.focus_pane_left", &self.app.focus_pane_left),
-            ("global.focus_pane_right", &self.app.focus_pane_right),
-            ("global.minimize_pane_width", minimize),
-            ("global.maximize_pane_width", maximize),
-            ("global.equalize_pane_widths", equalize),
-            ("global.resize_panes", resize),
-            ("global.move_divider_left", &self.app.move_divider_left),
-            ("global.move_divider_right", &self.app.move_divider_right),
-            ("global.toggle_pane_zoom", &self.app.toggle_pane_zoom),
-            ("global.hide_pane", &self.app.hide_pane),
-            ("global.close_sidebar_tab", &self.app.close_sidebar_tab),
-            ("global.sidebar_up", &self.app.sidebar_up),
-            ("global.sidebar_down", &self.app.sidebar_down),
-            ("chat.open_presets", &self.chat.open_presets),
-            ("chat.toggle_voice", &self.chat.toggle_voice),
-        ] {
+            (
+                "global.focus_sidebar_tabs",
+                self.app.focus_sidebar_tabs.as_slice(),
+            ),
+            (
+                "global.focus_pane_left",
+                self.app.focus_pane_left.as_slice(),
+            ),
+            (
+                "global.focus_pane_right",
+                self.app.focus_pane_right.as_slice(),
+            ),
+            (
+                "global.minimize_pane_width",
+                self.app.minimize_pane_width.as_slice(),
+            ),
+            (
+                "global.maximize_pane_width",
+                self.app.maximize_pane_width.as_slice(),
+            ),
+            (
+                "global.equalize_pane_widths",
+                self.app.equalize_pane_widths.as_slice(),
+            ),
+            ("global.resize_panes", self.app.resize_panes.as_slice()),
+            (
+                "global.move_divider_left",
+                self.app.move_divider_left.as_slice(),
+            ),
+            (
+                "global.move_divider_right",
+                self.app.move_divider_right.as_slice(),
+            ),
+            (
+                "global.toggle_pane_zoom",
+                self.app.toggle_pane_zoom.as_slice(),
+            ),
+            ("global.hide_pane", self.app.hide_pane.as_slice()),
+            (
+                "global.close_sidebar_tab",
+                self.app.close_sidebar_tab.as_slice(),
+            ),
+            ("global.sidebar_up", self.app.sidebar_up.as_slice()),
+            ("global.sidebar_down", self.app.sidebar_down.as_slice()),
+        ];
+        // Main-surface diagnostics name app actions without the `global.` prefix.
+        let panes =
+            global_panes.map(|(action, bindings)| (action.trim_start_matches("global."), bindings));
+        #[cfg(unix)]
+        for (action, bindings) in [
+            ("global.change_host", self.app.change_host.as_slice()),
+            ("global.open_agents", self.app.open_agents.as_slice()),
+        ]
+        .into_iter()
+        .chain(global_panes)
+        .chain([
+            ("chat.open_presets", self.chat.open_presets.as_slice()),
+            ("chat.toggle_voice", self.chat.toggle_voice.as_slice()),
+        ]) {
             if bindings.contains(&key_hint::ctrl(KeyCode::Char('z'))) {
                 return Err(format!(
                     "tui.keymap.{action}: ctrl-z is reserved for suspend"
@@ -2177,32 +2216,8 @@ impl RuntimeKeymap {
             side_toggle_bindings.push(legacy_slash_binding);
         }
 
-        let divider_left = self.app.move_divider_left.as_slice();
-        let divider_right = self.app.move_divider_right.as_slice();
-        let main_bindings = [
-            ("change_host", self.app.change_host.as_slice()),
-            (
-                "focus_main_composer",
-                self.app.focus_main_composer.as_slice(),
-            ),
-            (
-                "focus_sidebar_content",
-                self.app.focus_sidebar_content.as_slice(),
-            ),
-            ("focus_sidebar_tabs", self.app.focus_sidebar_tabs.as_slice()),
-            ("focus_pane_left", self.app.focus_pane_left.as_slice()),
-            ("focus_pane_right", self.app.focus_pane_right.as_slice()),
-            ("minimize_pane_width", minimize),
-            ("maximize_pane_width", maximize),
-            ("equalize_pane_widths", equalize),
-            ("resize_panes", resize),
-            ("move_divider_left", divider_left),
-            ("move_divider_right", divider_right),
-            ("toggle_pane_zoom", self.app.toggle_pane_zoom.as_slice()),
-            ("hide_pane", self.app.hide_pane.as_slice()),
-            ("close_sidebar_tab", self.app.close_sidebar_tab.as_slice()),
-            ("sidebar_up", self.app.sidebar_up.as_slice()),
-            ("sidebar_down", self.app.sidebar_down.as_slice()),
+        // App shortcuts dispatched before the approval overlay and the composer.
+        let app_shortcuts = [
             ("open_agents", self.app.open_agents.as_slice()),
             ("open_transcript", self.app.open_transcript.as_slice()),
             ("find_transcript", self.app.find_transcript.as_slice()),
@@ -2219,58 +2234,65 @@ impl RuntimeKeymap {
             ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
             ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
             ("toggle_side_conversation", side_toggle_bindings.as_slice()),
-            ("chat.open_presets", self.chat.open_presets.as_slice()),
-            ("chat.toggle_voice", self.chat.toggle_voice.as_slice()),
-            (
-                "chat.toggle_voice_mute",
-                self.chat.toggle_voice_mute.as_slice(),
-            ),
-            ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
-            (
-                "chat.decrease_reasoning_effort",
-                self.chat.decrease_reasoning_effort.as_slice(),
-            ),
-            (
-                "chat.increase_reasoning_effort",
-                self.chat.increase_reasoning_effort.as_slice(),
-            ),
-            (
-                "chat.previous_permission_mode",
-                self.chat.previous_permission_mode.as_slice(),
-            ),
-            (
-                "chat.next_permission_mode",
-                self.chat.next_permission_mode.as_slice(),
-            ),
-            (
-                "chat.edit_queued_message",
-                self.chat.edit_queued_message.as_slice(),
-            ),
-            (
-                "chat.prompt_stack_back",
-                self.chat.prompt_stack_back.as_slice(),
-            ),
-            ("chat.skip_question", self.chat.skip_question.as_slice()),
-            ("composer.submit", self.composer.submit.as_slice()),
-            ("composer.queue", self.composer.queue.as_slice()),
-            (
-                "composer.toggle_shortcuts",
-                self.composer.toggle_shortcuts.as_slice(),
-            ),
-            (
-                "composer.history_search_previous",
-                self.composer.history_search_previous.as_slice(),
-            ),
-            (
-                "composer.history_search_next",
-                self.composer.history_search_next.as_slice(),
-            ),
         ];
-        validate_unique("app", main_bindings)?;
+        let main_bindings: Vec<_> = [("change_host", self.app.change_host.as_slice())]
+            .into_iter()
+            .chain(panes)
+            .chain(app_shortcuts)
+            .chain([
+                ("chat.open_presets", self.chat.open_presets.as_slice()),
+                ("chat.toggle_voice", self.chat.toggle_voice.as_slice()),
+                (
+                    "chat.toggle_voice_mute",
+                    self.chat.toggle_voice_mute.as_slice(),
+                ),
+                ("chat.interrupt_turn", self.chat.interrupt_turn.as_slice()),
+                (
+                    "chat.decrease_reasoning_effort",
+                    self.chat.decrease_reasoning_effort.as_slice(),
+                ),
+                (
+                    "chat.increase_reasoning_effort",
+                    self.chat.increase_reasoning_effort.as_slice(),
+                ),
+                (
+                    "chat.previous_permission_mode",
+                    self.chat.previous_permission_mode.as_slice(),
+                ),
+                (
+                    "chat.next_permission_mode",
+                    self.chat.next_permission_mode.as_slice(),
+                ),
+                (
+                    "chat.edit_queued_message",
+                    self.chat.edit_queued_message.as_slice(),
+                ),
+                (
+                    "chat.prompt_stack_back",
+                    self.chat.prompt_stack_back.as_slice(),
+                ),
+                ("chat.skip_question", self.chat.skip_question.as_slice()),
+                ("composer.submit", self.composer.submit.as_slice()),
+                ("composer.queue", self.composer.queue.as_slice()),
+                (
+                    "composer.toggle_shortcuts",
+                    self.composer.toggle_shortcuts.as_slice(),
+                ),
+                (
+                    "composer.history_search_previous",
+                    self.composer.history_search_previous.as_slice(),
+                ),
+                (
+                    "composer.history_search_next",
+                    self.composer.history_search_next.as_slice(),
+                ),
+            ])
+            .collect();
+        validate_unique("app", main_bindings.iter().copied())?;
 
         validate_no_reserved(
             "main",
-            main_bindings,
+            main_bindings.iter().copied(),
             MAIN_RESERVED_BINDINGS,
             [(
                 "chat.interrupt_turn",
@@ -2310,24 +2332,7 @@ impl RuntimeKeymap {
         ];
         validate_no_shadow_with_allowed_overlaps(
             "app",
-            [
-                ("open_agents", self.app.open_agents.as_slice()),
-                ("open_transcript", self.app.open_transcript.as_slice()),
-                ("find_transcript", self.app.find_transcript.as_slice()),
-                ("select_transcript", self.app.select_transcript.as_slice()),
-                ("focus_activity", self.app.focus_activity.as_slice()),
-                ("open_warnings", self.app.open_warnings.as_slice()),
-                (
-                    "open_external_editor",
-                    self.app.open_external_editor.as_slice(),
-                ),
-                ("copy", self.app.copy.as_slice()),
-                ("clear_terminal", self.app.clear_terminal.as_slice()),
-                ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
-                ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
-                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
-                ("toggle_side_conversation", side_toggle_bindings.as_slice()),
-            ],
+            app_shortcuts,
             approval_overlay_bindings,
             [(
                 "clear_terminal",
@@ -2370,29 +2375,7 @@ impl RuntimeKeymap {
         // consume matching keys before the event reaches the textarea editor.
         validate_no_shadow_with_allowed_overlaps(
             "main",
-            [
-                (
-                    "focus_main_composer",
-                    self.app.focus_main_composer.as_slice(),
-                ),
-                (
-                    "focus_sidebar_content",
-                    self.app.focus_sidebar_content.as_slice(),
-                ),
-                ("focus_sidebar_tabs", self.app.focus_sidebar_tabs.as_slice()),
-                ("focus_pane_left", self.app.focus_pane_left.as_slice()),
-                ("focus_pane_right", self.app.focus_pane_right.as_slice()),
-                ("minimize_pane_width", minimize),
-                ("maximize_pane_width", maximize),
-                ("equalize_pane_widths", equalize),
-                ("resize_panes", resize),
-                ("move_divider_left", divider_left),
-                ("move_divider_right", divider_right),
-                ("toggle_pane_zoom", self.app.toggle_pane_zoom.as_slice()),
-                ("hide_pane", self.app.hide_pane.as_slice()),
-                ("close_sidebar_tab", self.app.close_sidebar_tab.as_slice()),
-                ("sidebar_up", self.app.sidebar_up.as_slice()),
-                ("sidebar_down", self.app.sidebar_down.as_slice()),
+            panes.into_iter().chain([
                 ("open_agents", self.app.open_agents.as_slice()),
                 ("open_transcript", self.app.open_transcript.as_slice()),
                 ("find_transcript", self.app.find_transcript.as_slice()),
@@ -2442,7 +2425,7 @@ impl RuntimeKeymap {
                     "composer.history_search_previous",
                     self.composer.history_search_previous.as_slice(),
                 ),
-            ],
+            ]),
             [
                 (
                     "editor.insert_newline",
@@ -2517,44 +2500,7 @@ impl RuntimeKeymap {
 
         validate_unique(
             "transcript",
-            [
-                (
-                    "global.focus_main_composer",
-                    self.app.focus_main_composer.as_slice(),
-                ),
-                (
-                    "global.focus_sidebar_content",
-                    self.app.focus_sidebar_content.as_slice(),
-                ),
-                (
-                    "global.focus_sidebar_tabs",
-                    self.app.focus_sidebar_tabs.as_slice(),
-                ),
-                (
-                    "global.focus_pane_left",
-                    self.app.focus_pane_left.as_slice(),
-                ),
-                (
-                    "global.focus_pane_right",
-                    self.app.focus_pane_right.as_slice(),
-                ),
-                ("global.minimize_pane_width", minimize),
-                ("global.maximize_pane_width", maximize),
-                ("global.equalize_pane_widths", equalize),
-                ("global.resize_panes", resize),
-                ("global.move_divider_left", divider_left),
-                ("global.move_divider_right", divider_right),
-                (
-                    "global.toggle_pane_zoom",
-                    self.app.toggle_pane_zoom.as_slice(),
-                ),
-                ("global.hide_pane", self.app.hide_pane.as_slice()),
-                (
-                    "global.close_sidebar_tab",
-                    self.app.close_sidebar_tab.as_slice(),
-                ),
-                ("global.sidebar_up", self.app.sidebar_up.as_slice()),
-                ("global.sidebar_down", self.app.sidebar_down.as_slice()),
+            global_panes.into_iter().chain([
                 (
                     "global.select_transcript",
                     self.app.select_transcript.as_slice(),
@@ -2573,7 +2519,7 @@ impl RuntimeKeymap {
                     self.pager.close_transcript.as_slice(),
                 ),
                 ("pager.find", self.pager.find.as_slice()),
-            ],
+            ]),
         )?;
 
         validate_no_reserved(
@@ -2586,54 +2532,19 @@ impl RuntimeKeymap {
         validate_unique("list", context_bindings(KeymapContext::List))?;
         validate_unique(
             "activity",
-            context_bindings(KeymapContext::List).chain([
-                (
-                    "global.focus_main_composer",
-                    self.app.focus_main_composer.as_slice(),
-                ),
-                (
-                    "global.focus_sidebar_content",
-                    self.app.focus_sidebar_content.as_slice(),
-                ),
-                (
-                    "global.focus_sidebar_tabs",
-                    self.app.focus_sidebar_tabs.as_slice(),
-                ),
-                (
-                    "global.focus_pane_left",
-                    self.app.focus_pane_left.as_slice(),
-                ),
-                (
-                    "global.focus_pane_right",
-                    self.app.focus_pane_right.as_slice(),
-                ),
-                ("global.minimize_pane_width", minimize),
-                ("global.maximize_pane_width", maximize),
-                ("global.equalize_pane_widths", equalize),
-                ("global.resize_panes", resize),
-                ("global.move_divider_left", divider_left),
-                ("global.move_divider_right", divider_right),
-                (
-                    "global.toggle_pane_zoom",
-                    self.app.toggle_pane_zoom.as_slice(),
-                ),
-                ("global.hide_pane", self.app.hide_pane.as_slice()),
-                (
-                    "global.close_sidebar_tab",
-                    self.app.close_sidebar_tab.as_slice(),
-                ),
-                ("global.sidebar_up", self.app.sidebar_up.as_slice()),
-                ("global.sidebar_down", self.app.sidebar_down.as_slice()),
-                ("global.focus_activity", self.app.focus_activity.as_slice()),
-                (
-                    "global.find_transcript",
-                    self.app.find_transcript.as_slice(),
-                ),
-                (
-                    "global.select_transcript",
-                    self.app.select_transcript.as_slice(),
-                ),
-            ]),
+            context_bindings(KeymapContext::List)
+                .chain(global_panes)
+                .chain([
+                    ("global.focus_activity", self.app.focus_activity.as_slice()),
+                    (
+                        "global.find_transcript",
+                        self.app.find_transcript.as_slice(),
+                    ),
+                    (
+                        "global.select_transcript",
+                        self.app.select_transcript.as_slice(),
+                    ),
+                ]),
         )?;
 
         validate_unique("agents", context_bindings(KeymapContext::Agents))?;
@@ -2720,9 +2631,9 @@ See the Codex keymap documentation for supported actions and examples."
     Ok(())
 }
 
-fn validate_no_shadow_with_allowed_overlaps<const N: usize, const M: usize, const A: usize>(
+fn validate_no_shadow_with_allowed_overlaps<'a, const M: usize, const A: usize>(
     context: &str,
-    primary: [(&'static str, &[KeyBinding]); N],
+    primary: impl IntoIterator<Item = (&'static str, &'a [KeyBinding])>,
     shadowed: [(&'static str, &[KeyBinding]); M],
     allowed_overlaps: [(&'static str, &'static str, KeyBinding); A],
 ) -> Result<(), String> {
