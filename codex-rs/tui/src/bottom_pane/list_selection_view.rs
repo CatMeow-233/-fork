@@ -1146,42 +1146,16 @@ impl ListSelectionView {
     }
 
     fn clear_to_terminal_bg(buf: &mut Buffer, area: Rect) {
-        let buf_area = buf.area();
-        let min_x = area.x.max(buf_area.x);
-        let min_y = area.y.max(buf_area.y);
-        let max_x = area
-            .x
-            .saturating_add(area.width)
-            .min(buf_area.x.saturating_add(buf_area.width));
-        let max_y = area
-            .y
-            .saturating_add(area.height)
-            .min(buf_area.y.saturating_add(buf_area.height));
-        for y in min_y..max_y {
-            for x in min_x..max_x {
-                buf[(x, y)]
-                    .set_symbol(" ")
-                    .set_style(ratatui::style::Style::reset());
-            }
+        for position in area.intersection(buf.area).positions() {
+            buf[position]
+                .set_symbol(" ")
+                .set_style(ratatui::style::Style::reset());
         }
     }
 
     fn force_bg_to_terminal_bg(buf: &mut Buffer, area: Rect) {
-        let buf_area = buf.area();
-        let min_x = area.x.max(buf_area.x);
-        let min_y = area.y.max(buf_area.y);
-        let max_x = area
-            .x
-            .saturating_add(area.width)
-            .min(buf_area.x.saturating_add(buf_area.width));
-        let max_y = area
-            .y
-            .saturating_add(area.height)
-            .min(buf_area.y.saturating_add(buf_area.height));
-        for y in min_y..max_y {
-            for x in min_x..max_x {
-                buf[(x, y)].set_bg(ratatui::style::Color::Reset);
-            }
+        for position in area.intersection(buf.area).positions() {
+            buf[position].set_bg(ratatui::style::Color::Reset);
         }
     }
 
@@ -1833,26 +1807,16 @@ impl Renderable for ListSelectionView {
                 .x
                 .saturating_add(outer_content_area.width)
                 .saturating_sub(clear_x);
-            Self::clear_to_terminal_bg(
-                buf,
-                Rect::new(
-                    clear_x,
-                    outer_content_area.y,
-                    clear_w,
-                    outer_content_area.height,
-                ),
+            let bg_area = Rect::new(
+                clear_x,
+                outer_content_area.y,
+                clear_w,
+                outer_content_area.height,
             );
+            Self::clear_to_terminal_bg(buf, bg_area);
             self.side_content.render(side_area, buf);
             if !self.preserve_side_content_bg {
-                Self::force_bg_to_terminal_bg(
-                    buf,
-                    Rect::new(
-                        clear_x,
-                        outer_content_area.y,
-                        clear_w,
-                        outer_content_area.height,
-                    ),
-                );
+                Self::force_bg_to_terminal_bg(buf, bg_area);
             }
         } else if stacked_side_area.height > 0 {
             // Stacked fallback: render below the list (same as old footer_content).
