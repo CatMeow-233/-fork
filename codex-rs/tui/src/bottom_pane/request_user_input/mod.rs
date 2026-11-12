@@ -494,24 +494,7 @@ impl RequestUserInputOverlay {
     }
 
     pub(super) fn options_preferred_height(&self, width: u16) -> u16 {
-        if !self.has_options() {
-            return 0;
-        }
-
-        let rows = self.option_rows();
-        if rows.is_empty() {
-            return 1;
-        }
-
-        let mut state = self
-            .current_answer()
-            .map(|answer| answer.options_state)
-            .unwrap_or_default();
-        if state.selected_idx.is_none() {
-            state.selected_idx = Some(0);
-        }
-
-        measure_rows_height(&rows, &state, rows.len(), width.max(1))
+        self.options_required_height(width)
     }
 
     fn capture_composer_draft(&self) -> ComposerDraft {
@@ -569,16 +552,36 @@ impl RequestUserInputOverlay {
             .set_placeholder_text(self.notes_placeholder().to_string());
     }
 
-    fn clear_notes_draft(&mut self) {
+    /// Move the option selection with wrap-around, un-committing the answer.
+    fn move_option_selection(&mut self, down: bool) {
+        let options_len = self.options_len();
+        let Some(answer) = self.current_answer_mut() else {
+            return;
+        };
+        if down {
+            answer.options_state.move_down_wrap(options_len);
+        } else {
+            answer.options_state.move_up_wrap(options_len);
+        }
+        answer.answer_committed = false;
+        self.sync_composer_placeholder();
+    }
+
+    /// Discard the current answer's notes draft and empty the composer.
+    fn reset_notes_draft(&mut self, notes_visible: bool) {
         if let Some(answer) = self.current_answer_mut() {
             answer.draft = ComposerDraft::default();
             answer.answer_committed = false;
-            answer.notes_visible = true;
+            answer.notes_visible = notes_visible;
         }
         self.pending_submission_draft = None;
         self.composer
             .set_text_content(String::new(), Vec::new(), Vec::new());
         self.composer.move_cursor_to_end();
+    }
+
+    fn clear_notes_draft(&mut self) {
+        self.reset_notes_draft(/*notes_visible*/ true);
         self.sync_composer_placeholder();
     }
 
@@ -808,14 +811,8 @@ impl RequestUserInputOverlay {
         }
         if let Some(answer) = self.current_answer_mut() {
             answer.options_state.reset();
-            answer.draft = ComposerDraft::default();
-            answer.answer_committed = false;
-            answer.notes_visible = false;
         }
-        self.pending_submission_draft = None;
-        self.composer
-            .set_text_content(String::new(), Vec::new(), Vec::new());
-        self.composer.move_cursor_to_end();
+        self.reset_notes_draft(/*notes_visible*/ false);
         self.sync_composer_placeholder();
     }
 
@@ -823,15 +820,7 @@ impl RequestUserInputOverlay {
         if !self.has_options() {
             return;
         }
-        if let Some(answer) = self.current_answer_mut() {
-            answer.draft = ComposerDraft::default();
-            answer.answer_committed = false;
-            answer.notes_visible = false;
-        }
-        self.pending_submission_draft = None;
-        self.composer
-            .set_text_content(String::new(), Vec::new(), Vec::new());
-        self.composer.move_cursor_to_end();
+        self.reset_notes_draft(/*notes_visible*/ false);
         self.focus = Focus::Options;
         self.sync_composer_placeholder();
     }
@@ -893,33 +882,24 @@ impl RequestUserInputOverlay {
                 },
             );
         }
-        let Ok(thread_id) = ThreadId::from_string(&self.request.thread_id) else {
-            tracing::error!("user input request had an invalid thread ID");
-            return;
-        };
-        self.app_event_tx.user_input_answer(
-            thread_id,
-            self.request.turn_id.clone(),
-            ToolRequestUserInputResponse {
-                answers: answers.clone(),
-            },
-        );
-        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-            history_cell::RequestUserInputResultCell {
-                questions: self.request.questions.clone(),
-                answers,
-                interrupted: false,
-            },
-        )));
-        self.advance_queue_or_complete_at(Instant::now());
+        if self.send_answers(answers) {
+            self.advance_queue_or_complete_at(Instant::now());
+        }
     }
 
     fn submit_empty_auto_resolution(&mut self, now: Instant) {
         self.confirm_unanswered = None;
-        let answers: HashMap<String, ToolRequestUserInputAnswer> = HashMap::new();
+        if self.send_answers(HashMap::new()) {
+            self.advance_queue_or_complete_at(now);
+        }
+    }
+
+    /// Send `answers` to the app and record them in history; returns false
+    /// without sending anything when the request's thread ID is invalid.
+    fn send_answers(&self, answers: HashMap<String, ToolRequestUserInputAnswer>) -> bool {
         let Ok(thread_id) = ThreadId::from_string(&self.request.thread_id) else {
             tracing::error!("user input request had an invalid thread ID");
-            return;
+            return false;
         };
         self.app_event_tx.user_input_answer(
             thread_id,
@@ -935,7 +915,7 @@ impl RequestUserInputOverlay {
                 interrupted: false,
             },
         )));
-        self.advance_queue_or_complete_at(now);
+        true
     }
 
     fn dismiss_resolved_request(&mut self, request: &ResolvedAppServerRequest) -> bool {
@@ -1312,32 +1292,13 @@ impl BottomPaneView for RequestUserInputOverlay {
 
         match self.focus {
             Focus::Options => {
-                let options_len = self.options_len();
                 // Keep selection synchronized as the user moves.
                 match (self.list_keymap.action_for(key_event), key_event.code) {
                     (Some(ListAction::MoveUp), _) | (_, KeyCode::Up | KeyCode::Char('k')) => {
-                        let moved = if let Some(answer) = self.current_answer_mut() {
-                            answer.options_state.move_up_wrap(options_len);
-                            answer.answer_committed = false;
-                            true
-                        } else {
-                            false
-                        };
-                        if moved {
-                            self.sync_composer_placeholder();
-                        }
+                        self.move_option_selection(/*down*/ false);
                     }
                     (Some(ListAction::MoveDown), _) | (_, KeyCode::Down | KeyCode::Char('j')) => {
-                        let moved = if let Some(answer) = self.current_answer_mut() {
-                            answer.options_state.move_down_wrap(options_len);
-                            answer.answer_committed = false;
-                            true
-                        } else {
-                            false
-                        };
-                        if moved {
-                            self.sync_composer_placeholder();
-                        }
+                        self.move_option_selection(/*down*/ true);
                     }
                     (_, KeyCode::Char(' ')) => {
                         self.select_current_option(/*committed*/ true);
@@ -1393,34 +1354,7 @@ impl BottomPaneView for RequestUserInputOverlay {
                     return;
                 }
                 if self.has_options() && matches!(key_event.code, KeyCode::Up | KeyCode::Down) {
-                    let options_len = self.options_len();
-                    match key_event.code {
-                        KeyCode::Up => {
-                            let moved = if let Some(answer) = self.current_answer_mut() {
-                                answer.options_state.move_up_wrap(options_len);
-                                answer.answer_committed = false;
-                                true
-                            } else {
-                                false
-                            };
-                            if moved {
-                                self.sync_composer_placeholder();
-                            }
-                        }
-                        KeyCode::Down => {
-                            let moved = if let Some(answer) = self.current_answer_mut() {
-                                answer.options_state.move_down_wrap(options_len);
-                                answer.answer_committed = false;
-                                true
-                            } else {
-                                false
-                            };
-                            if moved {
-                                self.sync_composer_placeholder();
-                            }
-                        }
-                        _ => {}
-                    }
+                    self.move_option_selection(key_event.code == KeyCode::Down);
                     return;
                 }
                 self.ensure_selected_for_notes();
