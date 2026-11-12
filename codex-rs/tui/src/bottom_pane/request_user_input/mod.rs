@@ -100,16 +100,26 @@ fn format_auto_resolution_remaining(remaining: Duration) -> String {
     format!("{minutes}m {seconds:02}s")
 }
 
+/// Notes text captured from a question overlay's composer.
 #[derive(Default, Clone, PartialEq)]
-struct ComposerDraft {
-    text: String,
-    text_elements: Vec<TextElement>,
-    local_image_paths: Vec<PathBuf>,
-    pending_pastes: Vec<(String, String)>,
+pub(super) struct ComposerDraft {
+    pub(super) text: String,
+    pub(super) text_elements: Vec<TextElement>,
+    pub(super) local_image_paths: Vec<PathBuf>,
+    pub(super) pending_pastes: Vec<(String, String)>,
 }
 
 impl ComposerDraft {
-    fn text_with_pending(&self) -> String {
+    pub(super) fn from_composer(composer: &ChatComposer) -> Self {
+        Self {
+            text: composer.current_text(),
+            text_elements: composer.text_elements(),
+            local_image_paths: composer.local_image_paths(),
+            pending_pastes: composer.pending_pastes(),
+        }
+    }
+
+    pub(super) fn text_with_pending(&self) -> String {
         if self.pending_pastes.is_empty() {
             return self.text.clone();
         }
@@ -124,6 +134,28 @@ impl ComposerDraft {
         );
         expanded
     }
+}
+
+/// Wrap each `\n`-separated line of `text` at `width`, keeping web URLs linked.
+pub(super) fn wrap_plain_text_with_links(
+    text: &str,
+    width: u16,
+) -> Vec<crate::terminal_hyperlinks::HyperlinkLine> {
+    text.split('\n')
+        .flat_map(|text| {
+            let source =
+                crate::terminal_hyperlinks::annotate_web_urls_in_line(text.to_owned().into());
+            let wrapped = crate::wrapping::wrap_ranges_trim(text, usize::from(width.max(1)))
+                .into_iter()
+                .map(|range| crate::wrapping::WrappedLine {
+                    line: (&text[range.clone()]).into(),
+                    range,
+                    prefix_bytes: 0,
+                })
+                .collect();
+            crate::terminal_hyperlinks::remap_source_wrapped_line(&source, wrapped)
+        })
+        .collect()
 }
 
 struct AnswerState {
@@ -393,26 +425,7 @@ impl RequestUserInputOverlay {
         width: u16,
     ) -> Vec<crate::terminal_hyperlinks::HyperlinkLine> {
         self.current_question()
-            .map(|q| {
-                q.question
-                    .split('\n')
-                    .flat_map(|text| {
-                        let source = crate::terminal_hyperlinks::annotate_web_urls_in_line(
-                            text.to_owned().into(),
-                        );
-                        let wrapped =
-                            crate::wrapping::wrap_ranges_trim(text, usize::from(width.max(1)))
-                                .into_iter()
-                                .map(|range| crate::wrapping::WrappedLine {
-                                    line: (&text[range.clone()]).into(),
-                                    range,
-                                    prefix_bytes: 0,
-                                })
-                                .collect();
-                        crate::terminal_hyperlinks::remap_source_wrapped_line(&source, wrapped)
-                    })
-                    .collect()
-            })
+            .map(|q| wrap_plain_text_with_links(&q.question, width))
             .unwrap_or_default()
     }
 
@@ -498,12 +511,7 @@ impl RequestUserInputOverlay {
     }
 
     fn capture_composer_draft(&self) -> ComposerDraft {
-        ComposerDraft {
-            text: self.composer.current_text(),
-            text_elements: self.composer.text_elements(),
-            local_image_paths: self.composer.local_image_paths(),
-            pending_pastes: self.composer.pending_pastes(),
-        }
+        ComposerDraft::from_composer(&self.composer)
     }
 
     fn save_current_draft(&mut self) {
